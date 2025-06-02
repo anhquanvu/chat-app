@@ -133,9 +133,10 @@ app:
 # Logging Configuration
 logging:
   level:
-    com.revotech.chatapp: INFO
-    org.springframework.security: WARN
-    org.springframework.web: WARN
+    root: INFO
+    com.revotech.chatapp: DEBUG
+    org.springframework.security: DEBUG
+    org.springframework.web: DEBUG
     org.springframework.messaging: INFO
     org.hibernate.SQL: WARN
     org.hibernate.type: WARN

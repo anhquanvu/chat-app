@@ -50,20 +50,17 @@ public class SecurityConfig {
         http.csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authz -> authz
-                        // Public endpoints
+                        // Cho phép truy cập trang index.html và tài nguyên tĩnh
+                        .requestMatchers("/", "/index.html", "/static/**", "/*.js", "/*.css", "/*.ico").permitAll()
+
+                        // Cho phép truy cập các API xác thực không cần token
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/ws/**").permitAll()
                         .requestMatchers("/actuator/health").permitAll()
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                         .requestMatchers("/error").permitAll()
 
-                        // File access (with authentication)
-                        .requestMatchers("/api/files/*/download").authenticated()
-
-                        // All other API endpoints require authentication
-                        .requestMatchers("/api/**").authenticated()
-
-                        // Default to authenticated
+                        // Các endpoint khác yêu cầu xác thực
                         .anyRequest().authenticated()
                 );
 

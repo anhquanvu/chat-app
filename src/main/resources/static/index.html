@@ -1,0 +1,1353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure Chat Application</title>
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/stompjs@2/lib/stomp.min.js"></script>
+    <style>
+        /* Giữ nguyên CSS */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .container {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+            width: 90%;
+            max-width: 1000px;
+            height: 80vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Auth Modal */
+        .auth-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .auth-container {
+            background: white;
+            padding: 40px;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+            width: 90%;
+            max-width: 400px;
+        }
+
+        .auth-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .auth-header h2 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .auth-header p {
+            color: #666;
+        }
+
+        .auth-tabs {
+            display: flex;
+            margin-bottom: 30px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .auth-tab {
+            flex: 1;
+            padding: 15px;
+            text-align: center;
+            cursor: pointer;
+            color: #666;
+            border-bottom: 2px solid transparent;
+            transition: all 0.3s;
+        }
+
+        .auth-tab.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+
+        .auth-form {
+            display: none;
+        }
+
+        .auth-form.active {
+            display: block;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #333;
+            font-weight: 500;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #eee;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus {
+            border-color: #667eea;
+            outline: none;
+        }
+
+        .auth-btn {
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: opacity 0.3s;
+        }
+
+        .auth-btn:hover {
+            opacity: 0.9;
+        }
+
+        .auth-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .error-message {
+            color: #e53e3e;
+            font-size: 14px;
+            margin-top: 10px;
+            text-align: center;
+        }
+
+        /* Chat Interface */
+        .chat-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .chat-header h1 {
+            font-size: 24px;
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .user-avatar {
+            width: 40px;
+            height: 40px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+        }
+
+        .logout-btn {
+            background: rgba(255,255,255,0.2);
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .logout-btn:hover {
+            background: rgba(255,255,255,0.3);
+        }
+
+        .chat-main {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .sidebar {
+            width: 250px;
+            background: #f8f9fa;
+            border-right: 1px solid #dee2e6;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-header {
+            padding: 15px;
+            background: #e9ecef;
+            font-weight: bold;
+            color: #495057;
+        }
+
+        .online-users {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+        }
+
+        .user-item {
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 5px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transition: background 0.2s;
+        }
+
+        .user-item:hover {
+            background: #e9ecef;
+        }
+
+        .user-status {
+            width: 8px;
+            height: 8px;
+            background: #28a745;
+            border-radius: 50%;
+        }
+
+        .typing-badge {
+            background: #ffc107;
+            color: #212529;
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 10px;
+            margin-left: auto;
+        }
+
+        .chat-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .messages-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: #fff;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            padding: 12px;
+            border-radius: 10px;
+            max-width: 70%;
+            word-wrap: break-word;
+        }
+
+        .message.chat {
+            background: #f8f9fa;
+            border-left: 4px solid #667eea;
+        }
+
+        .message.own {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            margin-left: auto;
+            text-align: right;
+        }
+
+        .message.system {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            text-align: center;
+            font-style: italic;
+            margin: 10px auto;
+            max-width: 50%;
+        }
+
+        .message.file {
+            background: #d1ecf1;
+            border-left: 4px solid #17a2b8;
+        }
+
+        .message-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 5px;
+            font-size: 12px;
+            opacity: 0.8;
+        }
+
+        .message-sender {
+            font-weight: bold;
+        }
+
+        .message-time {
+            font-size: 11px;
+        }
+
+        .typing-indicator {
+            padding: 10px 20px;
+            font-style: italic;
+            color: #666;
+            font-size: 14px;
+            background: #f8f9fa;
+            border-radius: 20px;
+            margin: 10px 0;
+            display: none;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .message-input-container {
+            padding: 20px;
+            background: #f8f9fa;
+            border-top: 1px solid #dee2e6;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .message-input {
+            flex: 1;
+            padding: 12px 15px;
+            border: 2px solid #dee2e6;
+            border-radius: 25px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        .message-input:focus {
+            border-color: #667eea;
+            outline: none;
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .file-btn, .send-btn {
+            width: 45px;
+            height: 45px;
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s;
+        }
+
+        .file-btn {
+            background: #6c757d;
+            color: white;
+        }
+
+        .file-btn:hover {
+            background: #5a6268;
+        }
+
+        .send-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .send-btn:hover {
+            opacity: 0.9;
+            transform: scale(1.05);
+        }
+
+        .send-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .progress-container {
+            padding: 10px 20px;
+            background: #fff3cd;
+            border-radius: 5px;
+            margin: 10px 0;
+            display: none;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 6px;
+            background: #e9ecef;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            width: 0%;
+            transition: width 0.3s;
+        }
+
+        .progress-text {
+            font-size: 12px;
+            margin-top: 5px;
+            color: #6c757d;
+        }
+
+        .connection-status {
+            padding: 10px;
+            text-align: center;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .connection-status.connected {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .connection-status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .sidebar {
+                display: none;
+            }
+
+            .container {
+                width: 95%;
+                height: 90vh;
+            }
+
+            .message {
+                max-width: 85%;
+            }
+        }
+
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+<!-- Authentication Modal -->
+<div id="authModal" class="auth-modal">
+    <div class="auth-container">
+        <div class="auth-header">
+            <h2>🚀 Secure Chat</h2>
+            <p>Đăng nhập để bắt đầu trò chuyện</p>
+        </div>
+
+        <div class="auth-tabs">
+            <div class="auth-tab active" onclick="switchTab('login')">Đăng nhập</div>
+            <div class="auth-tab" onclick="switchTab('register')">Đăng ký</div>
+        </div>
+
+        <!-- Login Form -->
+        <form id="loginForm" class="auth-form active">
+            <div class="form-group">
+                <label>Tên đăng nhập hoặc Email</label>
+                <input type="text" id="loginUsername" required>
+            </div>
+            <div class="form-group">
+                <label>Mật khẩu</label>
+                <input type="password" id="loginPassword" required>
+            </div>
+            <button type="submit" class="auth-btn">Đăng nhập</button>
+            <div id="loginError" class="error-message"></div>
+        </form>
+
+        <!-- Register Form -->
+        <form id="registerForm" class="auth-form">
+            <div class="form-group">
+                <label>Tên đăng nhập</label>
+                <input type="text" id="regUsername" required minlength="3">
+            </div>
+            <div class="form-group">
+                <label>Email</label>
+                <input type="email" id="regEmail" required>
+            </div>
+            <div class="form-group">
+                <label>Họ tên</label>
+                <input type="text" id="regFullName">
+            </div>
+            <div class="form-group">
+                <label>Số điện thoại</label>
+                <input type="tel" id="regPhone">
+            </div>
+            <div class="form-group">
+                <label>Mật khẩu</label>
+                <input type="password" id="regPassword" required minlength="6">
+            </div>
+            <button type="submit" class="auth-btn">Đăng ký</button>
+            <div id="registerError" class="error-message"></div>
+        </form>
+    </div>
+</div>
+
+<!-- Main Chat Interface -->
+<div id="chatContainer" class="container hidden">
+    <div class="chat-header">
+        <h1>💬 Secure Chat</h1>
+        <div class="user-info">
+            <div class="user-avatar" id="userAvatar"></div>
+            <div>
+                <div id="currentUsername"></div>
+                <div style="font-size: 12px; opacity: 0.8;" id="userRole"></div>
+            </div>
+            <button class="logout-btn" onclick="logout()">Đăng xuất</button>
+        </div>
+    </div>
+
+    <div id="connectionStatus" class="connection-status disconnected">
+        🔴 Đang kết nối...
+    </div>
+
+    <div class="chat-main">
+        <div class="sidebar">
+            <div class="sidebar-header">
+                👥 Người dùng trực tuyến (<span id="onlineCount">0</span>)
+            </div>
+            <div class="online-users" id="onlineUsers">
+                <div class="user-item">Đang tải...</div>
+            </div>
+        </div>
+
+        <div class="chat-content">
+            <div class="messages-container" id="messagesContainer">
+                <div class="message system">
+                    <div class="message-content">Chào mừng bạn đến với chat room! 🎉</div>
+                </div>
+            </div>
+
+            <div id="typingIndicator" class="typing-indicator"></div>
+
+            <div class="progress-container" id="progressContainer">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div class="progress-text" id="progressText"></div>
+            </div>
+
+            <div class="message-input-container">
+                <div class="input-group">
+                    <input type="file" id="fileInput" class="file-input" accept="*/*">
+                    <button class="file-btn" onclick="selectFile()" title="Đính kèm file">
+                        📎
+                    </button>
+                    <input
+                            type="text"
+                            id="messageInput"
+                            class="message-input"
+                            placeholder="Nhập tin nhắn..."
+                            maxlength="1000"
+                    >
+                    <button class="send-btn" id="sendBtn" onclick="sendMessage()" title="Gửi tin nhắn">
+                        ✈️
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Global variables
+    let stompClient = null;
+    let currentUser = null;
+    let authToken = null;
+    let refreshToken = null;
+    let connected = false;
+    let typingTimer = null;
+    let isCurrentlyTyping = false;
+    let typingUsers = new Set();
+
+    // Authentication functions
+    function switchTab(tab) {
+        // Update tabs
+        document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.auth-form').forEach(f => f.classList.remove('active'));
+
+        if (tab === 'login') {
+            document.querySelector('.auth-tab').classList.add('active');
+            document.getElementById('loginForm').classList.add('active');
+        } else {
+            document.querySelectorAll('.auth-tab')[1].classList.add('active');
+            document.getElementById('registerForm').classList.add('active');
+        }
+
+        // Clear errors
+        document.getElementById('loginError').textContent = '';
+        document.getElementById('registerError').textContent = '';
+    }
+
+    // Login form handler
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const username = document.getElementById('loginUsername').value.trim();
+        const password = document.getElementById('loginPassword').value;
+        const errorDiv = document.getElementById('loginError');
+
+        if (!username || !password) {
+            errorDiv.textContent = 'Vui lòng nhập đầy đủ thông tin';
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/auth/signin', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    username: username,
+                    password: password
+                })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                handleAuthSuccess(data);
+            } else {
+                const error = await response.text();
+                errorDiv.textContent = error || 'Đăng nhập thất bại';
+            }
+        } catch (error) {
+            console.error('Login error:', error);
+            errorDiv.textContent = 'Lỗi kết nối đến server';
+        }
+    });
+
+    // Register form handler
+    document.getElementById('registerForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const username = document.getElementById('regUsername').value.trim();
+        const email = document.getElementById('regEmail').value.trim();
+        const fullName = document.getElementById('regFullName').value.trim();
+        const phoneNumber = document.getElementById('regPhone').value.trim();
+        const password = document.getElementById('regPassword').value;
+        const errorDiv = document.getElementById('registerError');
+
+        if (!username || !email || !password) {
+            errorDiv.textContent = 'Vui lòng nhập đầy đủ thông tin bắt buộc';
+            return;
+        }
+
+        if (password.length < 6) {
+            errorDiv.textContent = 'Mật khẩu phải có ít nhất 6 ký tự';
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/auth/signup', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    username: username,
+                    email: email,
+                    fullName: fullName,
+                    phoneNumber: phoneNumber,
+                    password: password
+                })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                handleAuthSuccess(data);
+            } else {
+                const error = await response.text();
+                errorDiv.textContent = error || 'Đăng ký thất bại';
+            }
+        } catch (error) {
+            console.error('Register error:', error);
+            errorDiv.textContent = 'Lỗi kết nối đến server';
+        }
+    });
+
+    function handleAuthSuccess(data) {
+        // Store tokens
+        authToken = data.accessToken;
+        refreshToken = data.refreshToken;
+        currentUser = {
+            id: data.userId,
+            username: data.username,
+            fullName: data.fullName,
+            email: data.email
+        };
+
+        // Store in localStorage for persistence
+        localStorage.setItem('authToken', authToken);
+        localStorage.setItem('refreshToken', refreshToken);
+        localStorage.setItem('currentUser', JSON.stringify(currentUser));
+
+        // Update UI
+        document.getElementById('currentUsername').textContent = currentUser.fullName || currentUser.username;
+        document.getElementById('userAvatar').textContent = (currentUser.fullName || currentUser.username).charAt(0).toUpperCase();
+        document.getElementById('userRole').textContent = 'Thành viên';
+
+        // Hide auth modal and show chat
+        document.getElementById('authModal').classList.add('hidden');
+        document.getElementById('chatContainer').classList.remove('hidden');
+
+        // Connect to WebSocket
+        connectWebSocket();
+    }
+
+    function logout() {
+        // Call logout API
+        if (authToken) {
+            fetch('/api/auth/logout', {
+                method: 'POST',
+                headers: {
+                    'Authorization': 'Bearer ' + authToken
+                }
+            }).catch(error => console.error('Logout error:', error));
+        }
+
+        // Disconnect WebSocket
+        if (stompClient) {
+            stompClient.disconnect();
+            stompClient = null;
+        }
+
+        // Clear stored data
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('refreshToken');
+        localStorage.removeItem('currentUser');
+
+        // Reset variables
+        authToken = null;
+        refreshToken = null;
+        currentUser = null;
+
+        // Show auth modal
+        document.getElementById('authModal').classList.remove('hidden');
+        document.getElementById('chatContainer').classList.add('hidden');
+
+        // Reset forms
+        document.getElementById('loginForm').reset();
+        document.getElementById('registerForm').reset();
+        document.getElementById('loginError').textContent = '';
+        document.getElementById('registerError').textContent = '';
+    }
+
+    // WebSocket connection with JWT
+    function connectWebSocket() {
+        if (!authToken || !currentUser) {
+            console.error('No auth token or user data');
+            return;
+        }
+
+        const socket = new SockJS('/ws');
+        stompClient = Stomp.over(socket);
+
+        // Disable debug logs for production
+        stompClient.debug = null;
+
+        const connectHeaders = {
+            'Authorization': 'Bearer ' + authToken
+        };
+
+        stompClient.connect(connectHeaders, function (frame) {
+            console.log('Connected to WebSocket:', frame);
+            setConnectionStatus(true);
+
+            // Subscribe to public room messages
+            stompClient.subscribe('/topic/room/1', function (message) {
+                showMessage(JSON.parse(message.body).data);
+            });
+
+            // Subscribe to user status updates
+            stompClient.subscribe('/topic/user-status', function (message) {
+                updateUserStatus(JSON.parse(message.body));
+            });
+
+            // Subscribe to typing notifications
+            stompClient.subscribe('/topic/room/1', function (message) {
+                const response = JSON.parse(message.body);
+                if (response.type === 'TYPING' || response.type === 'STOP_TYPING') {
+                    showTyping(response.data);
+                }
+            });
+
+            // Send join message
+            sendJoinMessage();
+
+            // Load initial data
+            setTimeout(() => {
+                loadInitialData();
+            }, 500);
+
+        }, function(error) {
+            console.error('WebSocket connection error:', error);
+            setConnectionStatus(false);
+
+            // Try to refresh token if auth error
+            if (error.includes('401') || error.includes('403')) {
+                refreshAuthToken();
+            }
+        });
+    }
+
+    function sendJoinMessage() {
+        if (!stompClient || !connected) return;
+
+        const joinMessage = {
+            senderId: currentUser.id,
+            senderName: currentUser.fullName || currentUser.username,
+            senderUsername: currentUser.username,
+            type: 'JOIN',
+            roomId: 1
+        };
+
+        stompClient.send("/app/chat.room.1", {}, JSON.stringify(joinMessage));
+    }
+
+    async function refreshAuthToken() {
+        if (!refreshToken) {
+            logout();
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/auth/refresh', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: refreshToken
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                authToken = data.accessToken;
+                refreshToken = data.refreshToken;
+
+                // Update localStorage
+                localStorage.setItem('authToken', authToken);
+                localStorage.setItem('refreshToken', refreshToken);
+
+                // Reconnect with new token
+                connectWebSocket();
+            } else {
+                logout();
+            }
+        } catch (error) {
+            console.error('Token refresh error:', error);
+            logout();
+        }
+    }
+
+    function setConnectionStatus(isConnected) {
+        connected = isConnected;
+        const statusElement = document.getElementById('connectionStatus');
+        const sendBtn = document.getElementById('sendBtn');
+
+        if (isConnected) {
+            statusElement.textContent = '🟢 Đã kết nối';
+            statusElement.className = 'connection-status connected';
+            sendBtn.disabled = false;
+        } else {
+            statusElement.textContent = '🔴 Mất kết nối';
+            statusElement.className = 'connection-status disconnected';
+            sendBtn.disabled = true;
+        }
+    }
+
+    async function loadInitialData() {
+        await Promise.all([
+            loadMessages(),
+            loadOnlineUsers()
+        ]);
+    }
+
+    async function loadMessages() {
+        try {
+            const response = await fetch('/api/messages/search?roomId=1&page=0&size=50', {
+                headers: {
+                    'Authorization': 'Bearer ' + authToken
+                }
+            });
+
+            if (response.ok) {
+                const messages = await response.json();
+                const container = document.getElementById('messagesContainer');
+                container.innerHTML = '<div class="message system"><div class="message-content">Chào mừng bạn đến với chat room! 🎉</div></div>';
+
+                if (messages.content && messages.content.length > 0) {
+                    messages.content.forEach(message => showMessage(message));
+                }
+            }
+        } catch (error) {
+            console.error('Error loading messages:', error);
+        }
+    }
+
+    async function loadOnlineUsers() {
+        try {
+            // Sử dụng API để lấy danh sách người dùng online
+            // API này có thể được thay đổi tùy thuộc vào backend của bạn
+            const response = await fetch('/api/users/online', {
+                headers: {
+                    'Authorization': 'Bearer ' + authToken
+                }
+            });
+
+            if (response.ok) {
+                const users = await response.json();
+                updateOnlineUsers(users);
+            }
+        } catch (error) {
+            console.error('Error loading online users:', error);
+            // Tạm thời hiển thị người dùng đang đăng nhập
+            if (currentUser) {
+                updateOnlineUsers([{
+                    userId: currentUser.id,
+                    username: currentUser.username,
+                    isOnline: true
+                }]);
+            }
+        }
+    }
+
+    // Message functions
+    function sendMessage() {
+        const messageContent = document.getElementById('messageInput').value.trim();
+        if (!messageContent || !stompClient || !connected) return;
+
+        const chatMessage = {
+            senderId: currentUser.id,
+            senderName: currentUser.fullName || currentUser.username,
+            senderUsername: currentUser.username,
+            content: messageContent,
+            type: 'CHAT',
+            roomId: 1
+        };
+
+        stompClient.send("/app/chat.room.1", {}, JSON.stringify(chatMessage));
+        document.getElementById('messageInput').value = '';
+
+        // Stop typing
+        sendStopTyping();
+        isCurrentlyTyping = false;
+        clearTimeout(typingTimer);
+    }
+
+    function showMessage(message) {
+        const container = document.getElementById('messagesContainer');
+        const messageElement = document.createElement('div');
+
+        const isOwnMessage = message.senderId === currentUser.id;
+        let messageClass = 'message ';
+
+        if (message.type === 'JOIN' || message.type === 'LEAVE') {
+            messageClass += 'system';
+            messageElement.innerHTML = `
+                    <div class="message-content">${message.content || `${message.senderName} đã ${message.type === 'JOIN' ? 'tham gia' : 'rời khỏi'} phòng chat`}</div>
+                `;
+        } else if (message.type === 'CHAT') {
+            messageClass += isOwnMessage ? 'own' : 'chat';
+            const timestamp = new Date(message.timestamp).toLocaleTimeString('vi-VN', {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+
+            messageElement.innerHTML = `
+                    ${!isOwnMessage ? `<div class="message-header">
+                        <span class="message-sender">${message.senderName}</span>
+                        <span class="message-time">${timestamp}</span>
+                    </div>` : ''}
+                    <div class="message-content">${message.content}</div>
+                    ${isOwnMessage ? `<div class="message-time" style="text-align: right; margin-top: 5px; font-size: 11px;">${timestamp}</div>` : ''}
+                `;
+        } else if (message.type === 'FILE' || message.type === 'VOICE') {
+            messageClass += isOwnMessage ? 'own' : 'file';
+            const fileAttachment = message.fileAttachment;
+            const timestamp = new Date(message.timestamp).toLocaleTimeString('vi-VN', {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+
+            let fileContent = message.content || '';
+            if (fileAttachment) {
+                const fileName = fileAttachment.originalFileName || fileAttachment.fileName;
+                const fileSize = fileAttachment.fileSize ? `(${(fileAttachment.fileSize / 1024).toFixed(1)} KB)` : '';
+                const fileIcon = getFileIcon(fileAttachment.fileType);
+
+                fileContent += `<br>
+                        <div style="margin-top: 8px; padding: 8px; background: rgba(255,255,255,0.1); border-radius: 5px;">
+                            ${fileIcon} <a href="${fileAttachment.downloadUrl}" target="_blank" style="color: inherit; text-decoration: underline;">${fileName}</a> ${fileSize}
+                            <br><small><a href="${fileAttachment.downloadUrl}" download style="color: inherit;">💾 Tải xuống</a></small>
+                        </div>`;
+            }
+
+            messageElement.innerHTML = `
+                    ${!isOwnMessage ? `<div class="message-header">
+                        <span class="message-sender">${message.senderName}</span>
+                        <span class="message-time">${timestamp}</span>
+                    </div>` : ''}
+                    <div class="message-content">${fileContent}</div>
+                    ${isOwnMessage ? `<div class="message-time" style="text-align: right; margin-top: 5px; font-size: 11px;">${timestamp}</div>` : ''}
+                `;
+        }
+
+        messageElement.className = messageClass;
+        container.appendChild(messageElement);
+        container.scrollTop = container.scrollHeight;
+    }
+
+    function getFileIcon(fileType) {
+        const icons = {
+            'IMAGE': '🖼️',
+            'VOICE': '🎵',
+            'VIDEO': '🎥',
+            'DOCUMENT': '📄',
+            'OTHER': '📎'
+        };
+        return icons[fileType] || '📎';
+    }
+
+    // Typing functions
+    function sendTyping() {
+        if (!stompClient || !connected) return;
+
+        const typingMessage = {
+            senderId: currentUser.id,
+            senderName: currentUser.fullName || currentUser.username,
+            senderUsername: currentUser.username,
+            type: 'TYPING',
+            roomId: 1
+        };
+        stompClient.send("/app/chat.typing", {}, JSON.stringify(typingMessage));
+    }
+
+    function sendStopTyping() {
+        if (!stompClient || !connected) return;
+
+        const stopTypingMessage = {
+            senderId: currentUser.id,
+            senderName: currentUser.fullName || currentUser.username,
+            senderUsername: currentUser.username,
+            type: 'STOP_TYPING',
+            roomId: 1
+        };
+        stompClient.send("/app/chat.typing", {}, JSON.stringify(stopTypingMessage));
+    }
+
+    function showTyping(message) {
+        if (message.senderId === currentUser.id) return;
+
+        const typingIndicator = document.getElementById('typingIndicator');
+
+        if (message.type === 'TYPING') {
+            typingUsers.add(message.senderName);
+        } else if (message.type === 'STOP_TYPING') {
+            typingUsers.delete(message.senderName);
+        }
+
+        if (typingUsers.size > 0) {
+            const userList = Array.from(typingUsers);
+            let typingText = '';
+
+            if (userList.length === 1) {
+                typingText = `${userList[0]} đang nhập...`;
+            } else if (userList.length === 2) {
+                typingText = `${userList[0]} và ${userList[1]} đang nhập...`;
+            } else {
+                typingText = `${userList.length} người đang nhập...`;
+            }
+
+            typingIndicator.textContent = typingText;
+            typingIndicator.style.display = 'block';
+        } else {
+            typingIndicator.style.display = 'none';
+        }
+    }
+
+    function updateUserStatus(user) {
+        // Cập nhật trạng thái online/offline cho một người dùng
+        updateOnlineUsers();
+    }
+
+    function updateOnlineUsers(users = []) {
+        const container = document.getElementById('onlineUsers');
+        const countElement = document.getElementById('onlineCount');
+
+        // Nếu không có danh sách users, giữ nguyên danh sách hiện tại
+        if (!users || users.length === 0) {
+            return;
+        }
+
+        countElement.textContent = users.length;
+        container.innerHTML = '';
+
+        if (users.length === 0) {
+            container.innerHTML = '<div class="user-item">Không có người dùng trực tuyến</div>';
+        } else {
+            users.forEach(user => {
+                const userElement = document.createElement('div');
+                userElement.className = 'user-item';
+
+                userElement.innerHTML = `
+                        <div class="user-status"></div>
+                        <div style="flex: 1;">${user.username || user.senderUsername}</div>
+                        ${user.isTyping ? '<div class="typing-badge">Đang nhập</div>' : ''}
+                    `;
+
+                container.appendChild(userElement);
+            });
+        }
+    }
+
+    // File upload functions
+    function selectFile() {
+        document.getElementById('fileInput').click();
+    }
+
+    document.getElementById('fileInput').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (file) {
+            uploadFile(file);
+        }
+    });
+
+    async function uploadFile(file) {
+        if (!file || !authToken) return;
+
+        // Check file size (max 50MB)
+        if (file.size > 50 * 1024 * 1024) {
+            alert('File quá lớn! Kích thước tối đa là 50MB.');
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        // Show progress
+        showProgress(file.name, 0);
+
+        try {
+            const response = await fetch('/api/files/upload', {
+                method: 'POST',
+                headers: {
+                    'Authorization': 'Bearer ' + authToken
+                },
+                body: formData
+            });
+
+            if (response.ok) {
+                const fileMessage = await response.json();
+
+                // Gửi tin nhắn với file đính kèm
+                const chatMessage = {
+                    senderId: currentUser.id,
+                    senderName: currentUser.fullName || currentUser.username,
+                    senderUsername: currentUser.username,
+                    content: `Đã gửi một file: ${fileMessage.originalFileName}`,
+                    type: 'FILE',
+                    roomId: 1,
+                    fileUploadId: fileMessage.id
+                };
+
+                stompClient.send("/app/chat.room.1", {}, JSON.stringify(chatMessage));
+
+                // Cập nhật tiến trình đã hoàn thành
+                showProgress(file.name, 100, 'COMPLETED');
+                setTimeout(() => hideProgress(), 2000);
+
+                // Clear file input
+                document.getElementById('fileInput').value = '';
+            } else {
+                const error = await response.text();
+                hideProgress();
+                alert('Upload thất bại: ' + error);
+            }
+        } catch (error) {
+            console.error('Upload error:', error);
+            hideProgress();
+            alert('Upload thất bại: ' + error.message);
+        }
+    }
+
+    function showProgress(fileName, percentage, status = 'UPLOADING') {
+        const container = document.getElementById('progressContainer');
+        const fill = document.getElementById('progressFill');
+        const text = document.getElementById('progressText');
+
+        fill.style.width = percentage + '%';
+
+        let statusText = '';
+        if (status === 'UPLOADING') {
+            statusText = 'Đang tải lên...';
+        } else if (status === 'COMPLETED') {
+            statusText = 'Hoàn thành!';
+        } else if (status === 'FAILED') {
+            statusText = 'Thất bại!';
+        }
+
+        text.textContent = `${fileName} - ${percentage}% (${statusText})`;
+        container.style.display = 'block';
+    }
+
+    function hideProgress() {
+        document.getElementById('progressContainer').style.display = 'none';
+    }
+
+    // Message input handlers
+    document.getElementById('messageInput').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+        }
+    });
+
+    document.getElementById('messageInput').addEventListener('input', function() {
+        if (!connected) return;
+
+        if (!isCurrentlyTyping) {
+            sendTyping();
+            isCurrentlyTyping = true;
+        }
+
+        clearTimeout(typingTimer);
+        typingTimer = setTimeout(() => {
+            sendStopTyping();
+            isCurrentlyTyping = false;
+        }, 1500);
+    });
+
+    // Initialize app
+    function initializeApp() {
+        // Check for stored authentication
+        const storedToken = localStorage.getItem('authToken');
+        const storedRefreshToken = localStorage.getItem('refreshToken');
+        const storedUser = localStorage.getItem('currentUser');
+
+        if (storedToken && storedRefreshToken && storedUser) {
+            try {
+                authToken = storedToken;
+                refreshToken = storedRefreshToken;
+                currentUser = JSON.parse(storedUser);
+
+                // Update UI
+                document.getElementById('currentUsername').textContent = currentUser.fullName || currentUser.username;
+                document.getElementById('userAvatar').textContent = (currentUser.fullName || currentUser.username).charAt(0).toUpperCase();
+                document.getElementById('userRole').textContent = 'Thành viên';
+
+                // Hide auth modal and show chat
+                document.getElementById('authModal').classList.add('hidden');
+                document.getElementById('chatContainer').classList.remove('hidden');
+
+                // Connect to WebSocket
+                connectWebSocket();
+            } catch (error) {
+                console.error('Error parsing stored user data:', error);
+                logout();
+            }
+        }
+    }
+
+    // Handle connection lost
+    function handleConnectionLost() {
+        setConnectionStatus(false);
+
+        // Try to reconnect after 3 seconds
+        setTimeout(() => {
+            if (authToken && currentUser) {
+                console.log('Attempting to reconnect...');
+                connectWebSocket();
+            }
+        }, 3000);
+    }
+
+    // Handle page visibility change
+    document.addEventListener('visibilitychange', function() {
+        if (!document.hidden && authToken && currentUser && !connected) {
+            // Page became visible and we're not connected, try to reconnect
+            connectWebSocket();
+        }
+    });
+
+    // Handle beforeunload
+    window.addEventListener('beforeunload', function() {
+        if (stompClient && connected) {
+            sendStopTyping();
+            stompClient.disconnect();
+        }
+    });
+
+    // Network status detection
+    window.addEventListener('online', function() {
+        if (authToken && currentUser && !connected) {
+            setTimeout(() => {
+                connectWebSocket();
+            }, 1000);
+        }
+    });
+
+    window.addEventListener('offline', function() {
+        setConnectionStatus(false);
+    });
+
+    // Initialize when page loads
+    document.addEventListener('DOMContentLoaded', function() {
+        initializeApp();
+    });
+
+    // Periodic token refresh (every 20 minutes)
+    setInterval(() => {
+        if (refreshToken && authToken) {
+            refreshAuthToken();
+        }
+    }, 20 * 60 * 1000);
+
+    console.log('🚀 Secure Chat Application initialized');
+</script>
+</body>
+</html>
