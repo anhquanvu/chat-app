@@ -28,9 +28,11 @@ public class Conversation {
     @Column(nullable = false)
     private ConversationType type;
 
-    @Column(nullable = false)
+    // FIX: Explicitly map column names
+    @Column(name = "participant1_id", nullable = false)
     private Long participant1Id;
 
+    @Column(name = "participant2_id")
     private Long participant2Id;
 
     @Builder.Default

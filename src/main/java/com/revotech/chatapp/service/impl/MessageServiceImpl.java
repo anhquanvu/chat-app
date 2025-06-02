@@ -11,6 +11,7 @@ import com.revotech.chatapp.model.dto.request.SendMessageRequest;
 import com.revotech.chatapp.model.dto.response.WebSocketResponse;
 import com.revotech.chatapp.model.entity.*;
 import com.revotech.chatapp.model.enums.DeliveryStatus;
+import com.revotech.chatapp.model.enums.MessageStatus;
 import com.revotech.chatapp.model.enums.MessageType;
 import com.revotech.chatapp.repository.*;
 import com.revotech.chatapp.service.MessageService;
@@ -284,6 +285,26 @@ public class MessageServiceImpl implements MessageService {
             messageDeliveryRepository.save(delivery);
         }
 
+        // Update message status to READ for sender
+        message.setStatus(MessageStatus.READ);
+        messageRepository.save(message);
+
+        // Broadcast status update to sender
+        ChatMessage updatedMessage = convertMessageToDTO(message);
+
+        WebSocketResponse<ChatMessage> response = WebSocketResponse.<ChatMessage>builder()
+                .type("MESSAGE")
+                .action("STATUS_UPDATE")
+                .data(updatedMessage)
+                .timestamp(LocalDateTime.now())
+                .build();
+
+        String destination = message.getRoom() != null ?
+                "/topic/room/" + message.getRoom().getId() :
+                "/topic/conversation/" + message.getConversation().getId();
+
+        messagingTemplate.convertAndSend(destination, response);
+
         log.info("Message {} marked as read by user {}", request.getMessageId(), userId);
     }
 
@@ -433,6 +454,8 @@ public class MessageServiceImpl implements MessageService {
                 "/topic/conversation/" + conversationId;
 
         messagingTemplate.convertAndSend(destination, response);
+
+        log.debug("Typing notification sent: {} {} in {}", username, isTyping ? "started" : "stopped", destination);
     }
 
     @Override
