@@ -51,7 +51,7 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authz -> authz
                         // Cho phép truy cập trang index.html và tài nguyên tĩnh
-                        .requestMatchers("/", "/index.html", "/static/**", "/*.js", "/*.css", "/*.ico").permitAll()
+                        .requestMatchers("/", "/index.html", "/css/**", "/js/**", "/images/**", "/webjars/**").permitAll()
 
                         // Cho phép truy cập các API xác thực không cần token
                         .requestMatchers("/api/auth/**").permitAll()

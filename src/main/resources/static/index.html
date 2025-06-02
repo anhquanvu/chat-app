@@ -157,6 +157,7 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-shrink: 0; /* Không cho phép co lại */
         }
 
         .chat-header h1 {
@@ -197,7 +198,8 @@
         .chat-main {
             display: flex;
             flex: 1;
-            overflow: hidden;
+            overflow: hidden; /* Quan trọng: ngăn overflow */
+            min-height: 0; /* Quan trọng: cho phép flex item co lại */
         }
 
         /* Sidebar */
@@ -207,11 +209,13 @@
             border-right: 1px solid #dee2e6;
             display: flex;
             flex-direction: column;
+            flex-shrink: 0; /* Không cho phép co lại */
         }
 
         .sidebar-tabs {
             display: flex;
             background: #e9ecef;
+            flex-shrink: 0;
         }
 
         .sidebar-tab {
@@ -235,12 +239,14 @@
             overflow: hidden;
             display: flex;
             flex-direction: column;
+            min-height: 0;
         }
 
         .sidebar-panel {
             display: none;
             flex-direction: column;
             height: 100%;
+            min-height: 0;
         }
 
         .sidebar-panel.active {
@@ -253,6 +259,7 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-shrink: 0;
         }
 
         .sidebar-header h3 {
@@ -276,8 +283,9 @@
 
         .sidebar-list {
             flex: 1;
-            overflow-y: auto;
+            overflow-y: auto; /* Cho phép cuộn */
             padding: 10px;
+            min-height: 0;
         }
 
         .list-item {
@@ -341,11 +349,14 @@
             margin-left: 10px;
         }
 
-        /* Chat Content */
+        /* Chat Content - QUAN TRỌNG: Layout cố định hoàn toàn */
         .chat-content {
             flex: 1;
             display: flex;
             flex-direction: column;
+            min-height: 0; /* Quan trọng */
+            overflow: hidden; /* Quan trọng */
+            position: relative; /* Quan trọng để cố định layout */
         }
 
         .chat-content-header {
@@ -355,6 +366,7 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-shrink: 0; /* Không co lại */
         }
 
         .chat-title {
@@ -382,11 +394,26 @@
             background: #5a6268;
         }
 
-        .messages-container {
+        /* QUAN TRỌNG: Messages area với position cố định */
+        .messages-area {
             flex: 1;
-            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* QUAN TRỌNG: Container tin nhắn có thể cuộn */
+        .messages-container {
+            flex: 1; /* Chiếm toàn bộ không gian còn lại */
+            overflow-y: auto; /* Cho phép cuộn dọc */
             padding: 20px;
             background: #fff;
+            min-height: 0; /* Quan trọng: cho phép co lại */
+            display: flex;
+            flex-direction: column;
+            position: relative;
         }
 
         .message {
@@ -395,6 +422,7 @@
             border-radius: 10px;
             max-width: 70%;
             word-wrap: break-word;
+            flex-shrink: 0; /* Tin nhắn không co lại */
         }
 
         .message.chat {
@@ -437,6 +465,7 @@
 
         .message-content {
             margin-bottom: 5px;
+            line-height: 1.4;
         }
 
         .message-footer {
@@ -516,6 +545,7 @@
             background: rgba(255,255,255,0.2);
         }
 
+        /* QUAN TRỌNG: Typing indicator TRONG messages container */
         .typing-indicator {
             padding: 10px 20px;
             font-style: italic;
@@ -526,6 +556,10 @@
             margin: 10px 0;
             display: none;
             animation: pulse 1.5s infinite;
+            flex-shrink: 0;
+            position: sticky; /* Sticky để luôn hiển thị */
+            bottom: 0;
+            z-index: 10;
         }
 
         .typing-indicator.show {
@@ -595,16 +629,20 @@
             color: #495057;
         }
 
+        /* QUAN TRỌNG: Input container cố định tuyệt đối */
         .message-input-container {
             padding: 20px;
             background: #f8f9fa;
             border-top: 1px solid #dee2e6;
+            flex-shrink: 0; /* KHÔNG co lại */
+            position: relative; /* Đảm bảo luôn ở dưới cùng */
+            min-height: 85px; /* Chiều cao tối thiểu cố định */
         }
 
         .input-group {
             display: flex;
             gap: 10px;
-            align-items: center;
+            align-items: flex-end;
         }
 
         .message-input {
@@ -614,6 +652,11 @@
             border-radius: 25px;
             font-size: 14px;
             transition: border-color 0.3s;
+            resize: none;
+            max-height: 120px;
+            min-height: 45px;
+            line-height: 1.4;
+            font-family: inherit;
         }
 
         .message-input:focus {
@@ -635,6 +678,7 @@
             align-items: center;
             justify-content: center;
             transition: all 0.3s;
+            flex-shrink: 0;
         }
 
         .file-btn {
@@ -798,6 +842,29 @@
             color: #721c24;
         }
 
+        /* Custom scrollbar styling */
+        .messages-container::-webkit-scrollbar,
+        .sidebar-list::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .messages-container::-webkit-scrollbar-track,
+        .sidebar-list::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 3px;
+        }
+
+        .messages-container::-webkit-scrollbar-thumb,
+        .sidebar-list::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 3px;
+        }
+
+        .messages-container::-webkit-scrollbar-thumb:hover,
+        .sidebar-list::-webkit-scrollbar-thumb:hover {
+            background: #a8a8a8;
+        }
+
         .hidden {
             display: none !important;
         }
@@ -826,6 +893,14 @@
 
             .message {
                 max-width: 85%;
+            }
+
+            .chat-header {
+                padding: 15px;
+            }
+
+            .chat-header h1 {
+                font-size: 20px;
             }
         }
     </style>
@@ -967,21 +1042,28 @@
                     </div>
                 </div>
 
-                <div class="messages-container" id="messagesContainer">
-                    <!-- Messages will be loaded here -->
+                <div class="messages-area">
+                    <div class="messages-container" id="messagesContainer">
+                        <!-- Messages will be loaded here -->
+
+                        <!-- Typing indicator INSIDE messages container -->
+                        <div class="typing-indicator" id="typingIndicator">
+                            <span id="typingText"></span>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="message-input-container">
                     <div class="input-group">
                         <input type="file" id="fileInput" class="file-input" accept="*/*">
                         <button class="file-btn" onclick="selectFile()" title="Đính kèm file">📎</button>
-                        <input
-                                type="text"
+                        <textarea
                                 id="messageInput"
                                 class="message-input"
                                 placeholder="Nhập tin nhắn..."
+                                rows="1"
                                 maxlength="1000"
-                        >
+                        ></textarea>
                         <button class="send-btn" id="sendBtn" onclick="sendMessage()" title="Gửi tin nhắn">✈️</button>
                     </div>
                 </div>
@@ -1051,6 +1133,16 @@
             </div>
         </div>
     </div>
+</div>
+
+<!-- Reaction Picker -->
+<div id="reactionPicker" class="reaction-picker">
+    <div class="reaction-option" onclick="addReaction('LIKE')">👍</div>
+    <div class="reaction-option" onclick="addReaction('LOVE')">❤️</div>
+    <div class="reaction-option" onclick="addReaction('LAUGH')">😂</div>
+    <div class="reaction-option" onclick="addReaction('CRY')">😢</div>
+    <div class="reaction-option" onclick="addReaction('ANGRY')">😡</div>
+    <div class="reaction-option" onclick="addReaction('WOW')">😮</div>
 </div>
 
 <script>
@@ -1590,25 +1682,38 @@
 
     function displayMessages(messages) {
         const container = document.getElementById('messagesContainer');
+
+        // Clear existing messages but keep typing indicator
+        const typingIndicator = container.querySelector('.typing-indicator');
         container.innerHTML = '';
+        if (typingIndicator) {
+            container.appendChild(typingIndicator);
+        }
 
         if (messages.length === 0) {
-            container.innerHTML = '<div class="message system"><div class="message-content">Chưa có tin nhắn nào. Hãy bắt đầu cuộc trò chuyện! 🎉</div></div>';
+            const systemMessage = document.createElement('div');
+            systemMessage.className = 'message system';
+            systemMessage.innerHTML = '<div class="message-content">Chưa có tin nhắn nào. Hãy bắt đầu cuộc trò chuyện! 🎉</div>';
+            container.insertBefore(systemMessage, typingIndicator);
             return;
         }
 
         // Reverse to show oldest first
-        messages.reverse().forEach(message => showMessage(message));
-        container.scrollTop = container.scrollHeight;
+        messages.reverse().forEach(message => showMessage(message, false));
+
+        // Auto scroll to bottom
+        setTimeout(() => {
+            container.scrollTop = container.scrollHeight;
+        }, 100);
     }
 
-    function showMessage(message) {
+    function showMessage(message, shouldScroll = true) {
         const container = document.getElementById('messagesContainer');
+        const typingIndicator = container.querySelector('.typing-indicator');
 
         // Check if message already exists (avoid duplicates)
         const existingMessage = container.querySelector(`[data-message-id="${message.id}"]`);
         if (existingMessage) {
-            // Update existing message if needed
             return;
         }
 
@@ -1667,12 +1772,18 @@
 
         messageElement.className = messageClass;
         messageElement.dataset.messageId = message.id;
-        container.appendChild(messageElement);
-        container.scrollTop = container.scrollHeight;
+
+        // Insert before typing indicator
+        container.insertBefore(messageElement, typingIndicator);
+
+        // Auto scroll to bottom when new message added
+        if (shouldScroll) {
+            container.scrollTop = container.scrollHeight;
+        }
 
         // Mark message as read if not own message
         if (!isOwnMessage && currentChatType && currentChatId) {
-            setTimeout(() => markMessageAsRead(message.id), 1000); // Delay to simulate reading
+            setTimeout(() => markMessageAsRead(message.id), 1000);
         }
     }
 
@@ -1700,7 +1811,8 @@
 
     // Send message function
     function sendMessage() {
-        const messageContent = document.getElementById('messageInput').value.trim();
+        const messageInput = document.getElementById('messageInput');
+        const messageContent = messageInput.value.trim();
         if (!messageContent || !stompClient || !connected || !currentChatType || !currentChatId) return;
 
         const chatMessage = {
@@ -1714,7 +1826,8 @@
             stompClient.send(`/app/chat/conversation/${currentChatId}`, {}, JSON.stringify(chatMessage));
         }
 
-        document.getElementById('messageInput').value = '';
+        messageInput.value = '';
+        messageInput.style.height = 'auto'; // Reset height
 
         // Stop typing
         sendStopTyping();
@@ -1774,6 +1887,7 @@
     function updateTypingIndicator() {
         const indicator = document.getElementById('typingIndicator');
         const textElement = document.getElementById('typingText');
+        const container = document.getElementById('messagesContainer');
 
         if (typingUsers.size > 0) {
             const userList = Array.from(typingUsers);
@@ -1789,6 +1903,11 @@
 
             textElement.textContent = typingText;
             indicator.classList.add('show');
+
+            // Auto scroll to show typing indicator
+            setTimeout(() => {
+                container.scrollTop = container.scrollHeight;
+            }, 50);
         } else {
             indicator.classList.remove('show');
         }
@@ -1855,7 +1974,6 @@
 
     function handleReactionUpdate(reactions) {
         // Update reactions in the message
-        // This would typically update the UI based on the reaction data
         console.log('Reaction update:', reactions);
     }
 
@@ -2104,35 +2222,6 @@
         }
     }
 
-    // Utility functions
-    function formatTime(dateString) {
-        if (!dateString) return '';
-
-        const date = new Date(dateString);
-        const now = new Date();
-        const diff = now - date;
-
-        if (diff < 24 * 60 * 60 * 1000) { // Less than 24 hours
-            return date.toLocaleTimeString('vi-VN', {
-                hour: '2-digit',
-                minute: '2-digit'
-            });
-        } else {
-            return date.toLocaleDateString('vi-VN', {
-                day: '2-digit',
-                month: '2-digit'
-            });
-        }
-    }
-
-    function updateUserStatus(userStatus) {
-        // Update online status in contact list
-        const contactItems = document.querySelectorAll('#contactsList .list-item');
-        contactItems.forEach(item => {
-            // Update based on user status
-        });
-    }
-
     // File upload
     function selectFile() {
         document.getElementById('fileInput').click();
@@ -2192,6 +2281,44 @@
         }
     }
 
+    // Utility functions
+    function formatTime(dateString) {
+        if (!dateString) return '';
+
+        const date = new Date(dateString);
+        const now = new Date();
+        const diff = now - date;
+
+        if (diff < 24 * 60 * 60 * 1000) { // Less than 24 hours
+            return date.toLocaleTimeString('vi-VN', {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        } else {
+            return date.toLocaleDateString('vi-VN', {
+                day: '2-digit',
+                month: '2-digit'
+            });
+        }
+    }
+
+    function updateUserStatus(userStatus) {
+        // Update online status in contact list
+        const contactItems = document.querySelectorAll('#contactsList .list-item');
+        contactItems.forEach(item => {
+            // Update based on user status
+        });
+    }
+
+    // Search functions (placeholder)
+    function searchInChat() {
+        alert('Tính năng tìm kiếm đang được phát triển');
+    }
+
+    function showChatInfo() {
+        alert('Tính năng thông tin chat đang được phát triển');
+    }
+
     // Event listeners
     document.getElementById('messageInput').addEventListener('keypress', function(e) {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -2200,8 +2327,12 @@
         }
     });
 
-    // Typing detection
+    // Auto-resize textarea
     document.getElementById('messageInput').addEventListener('input', function() {
+        this.style.height = 'auto';
+        this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+
+        // Typing detection
         if (!connected) return;
 
         if (!isCurrentlyTyping) {
@@ -2262,6 +2393,12 @@
     // Page load event
     document.addEventListener('DOMContentLoaded', function() {
         initializeApp();
+
+        // Auto scroll messages container to bottom on load
+        const messagesContainer = document.getElementById('messagesContainer');
+        if (messagesContainer) {
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
     });
 
     // Periodic token refresh (every 20 minutes)
@@ -2271,7 +2408,7 @@
         }
     }, 20 * 60 * 1000);
 
-    console.log('🚀 Complete Chat Application initialized');
+    console.log('🚀 Final Fixed Chat Application - Input Always Fixed initialized');
 </script>
 </body>
 </html>
