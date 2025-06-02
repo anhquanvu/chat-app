@@ -1,0 +1,171 @@
+# Chat Application - Main Configuration
+server:
+  port: 8080
+  servlet:
+    context-path: /
+  error:
+    include-message: always
+    include-binding-errors: always
+
+spring:
+  application:
+    name: chat-app
+  
+  # Database Configuration
+  datasource:
+    url: jdbc:mysql://localhost:3306/chatapp?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+    username: root
+    password: 12345678
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      pool-name: ChatAppHikariCP
+
+  # JPA Configuration
+  jpa:
+    hibernate:
+      ddl-auto: update # Đổi từ validate về update để tự động tạo/cập nhật schema
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect # Sửa từ MySQL8Dialect
+        format_sql: true
+        use_sql_comments: true
+        jdbc:
+          batch_size: 25
+        order_inserts: true
+        order_updates: true
+        # Thêm cấu hình naming strategy
+        naming:
+          physical-strategy: org.hibernate.boot.model.naming.CamelCaseToUnderscoresNamingStrategy
+    open-in-view: false
+
+  # Disable Flyway nếu không dùng
+  flyway:
+    enabled: false
+
+  # Redis Configuration - Comment out vì chưa có Redis
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      password:
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 20
+          max-idle: 10
+          min-idle: 2
+          max-wait: 2000ms
+
+  # File Upload Configuration
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 100MB
+      enabled: true
+      file-size-threshold: 2KB
+
+  # Jackson Configuration
+  jackson:
+    default-property-inclusion: NON_NULL
+    serialization:
+      write-dates-as-timestamps: false
+      fail-on-empty-beans: false
+    deserialization:
+      fail-on-unknown-properties: false
+    time-zone: UTC
+
+# Application Specific Configuration
+app:
+  # JWT Configuration
+  jwt:
+    secret: mySecretKey123456789012345678901234567890abcdefghijklmnopqrstuvwxyz
+    expiration: 3600 # 1 hour in seconds
+    refresh-expiration: 86400 # 24 hours in seconds
+
+  # CORS Configuration
+  cors:
+    allowed-origins: http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000
+    allowed-methods: GET,POST,PUT,DELETE,OPTIONS
+    allowed-headers: "*"
+    allow-credentials: true
+    max-age: 3600
+
+  # WebSocket Configuration
+  websocket:
+    allowed-origins: http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000
+
+  # Cache Configuration
+  cache:
+    default-ttl: 600 # 10 minutes
+    user-cache-ttl: 1800 # 30 minutes
+    message-cache-ttl: 3600 # 1 hour
+
+  # Rate Limiting Configuration
+  rate-limiting:
+    enabled: false # Tắt tạm thời vì phụ thuộc Redis
+    requests-per-minute: 60
+    requests-per-hour: 1000
+    burst-capacity: 10
+
+  # File Storage Configuration
+  storage:
+    upload-dir: ./uploads
+    max-file-size: 52428800 # 50MB in bytes
+    allowed-types: image/,video/,audio/,application/pdf,application/msword,application/vnd.openxmlformats-officedocument
+
+  # Encryption Configuration
+  encryption:
+    enabled: false
+    secret-key: # Will be generated if empty
+
+  # Security Configuration
+  security:
+    password-strength: 6 # Minimum password length
+    max-login-attempts: 5
+    lockout-duration: 900 # 15 minutes in seconds
+
+# Logging Configuration
+logging:
+  level:
+    com.revotech.chatapp: INFO
+    org.springframework.security: WARN
+    org.springframework.web: WARN
+    org.springframework.messaging: INFO
+    org.hibernate.SQL: WARN
+    org.hibernate.type: WARN
+    org.springframework.data.redis: WARN
+    org.springframework.cache: WARN # Giảm log cache
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: logs/chatapp.log
+    max-size: 100MB
+    max-history: 30
+
+# Management and Monitoring
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+
+# Spring Doc OpenAPI Configuration
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operationsSorter: method
+    tagsSorter: alpha
+  default-consumes-media-type: application/json
+  default-produces-media-type: application/json

@@ -1,0 +1,122 @@
+# Chat Application - Development Environment Configuration
+spring:
+  # Development Database Configuration
+  datasource:
+    url: jdbc:mysql://localhost:3306/chatapp_dev?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+    username: chatapp_dev
+    password: dev_password
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 20000
+
+  # JPA Development Settings
+  jpa:
+    hibernate:
+      ddl-auto: create-drop # Recreate tables on startup for development
+    show-sql: true # Show SQL queries in development
+    properties:
+      hibernate:
+        format_sql: true
+        use_sql_comments: true
+
+  # Redis Development Configuration
+#  redis:
+#    host: localhost
+#    port: 6379
+#    password:
+#    database: 1 # Use different database for development
+
+  # Development Cache Configuration
+  cache:
+    type: redis
+    redis:
+      time-to-live: 300000 # 5 minutes for development
+
+# Development specific app configuration
+app:
+  # JWT Configuration for Development
+  jwt:
+    secret: devSecretKey123456789012345678901234567890
+    expiration: 7200 # 2 hours for development
+    refresh-expiration: 172800 # 48 hours for development
+
+  # CORS Configuration - More permissive for development
+  cors:
+    allowed-origins: "*"
+    allowed-methods: "*"
+    allowed-headers: "*"
+    allow-credentials: true
+
+  # WebSocket Configuration
+  websocket:
+    allowed-origins: "*"
+
+  # Rate Limiting - More lenient for development
+  rate-limiting:
+    enabled: false # Disable rate limiting in development
+    requests-per-minute: 120
+    requests-per-hour: 2000
+    burst-capacity: 20
+
+  # File Storage for Development
+  storage:
+    upload-dir: ./dev-uploads
+    max-file-size: 104857600 # 100MB for development
+    allowed-types: "*" # Allow all file types in development
+
+  # Encryption for Development
+  encryption:
+    enabled: false # Disabled for easier development
+
+  # Development Security Settings
+  security:
+    password-strength: 3 # Relaxed for development
+    max-login-attempts: 10
+    lockout-duration: 300 # 5 minutes
+
+# Development Logging Configuration
+logging:
+  level:
+    com.revotech.chatapp: DEBUG
+    org.springframework.security: DEBUG
+    org.springframework.web: DEBUG
+    org.springframework.messaging: DEBUG
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+    org.springframework.data.redis: DEBUG
+    org.springframework.cache: DEBUG
+    web: DEBUG
+  pattern:
+    console: "%clr(%d{yyyy-MM-dd HH:mm:ss.SSS}){faint} %clr(%5p) %clr(${PID:- }){magenta} %clr(---){faint} %clr([%15.15t]){faint} %clr(%-40.40logger{39}){cyan} %clr(:){faint} %m%n%wEx"
+
+# Development Management Configuration
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*" # Expose all endpoints in development
+  endpoint:
+    health:
+      show-details: always
+    env:
+      show-values: always
+
+# Development Server Configuration
+server:
+  port: 8080
+  error:
+    include-stacktrace: always
+    include-message: always
+    include-binding-errors: always
+
+# Development Profile Specific Settings
+debug: true
+
+# Spring Boot Development Tools
+spring.devtools:
+  restart:
+    enabled: true
+  livereload:
+    enabled: true

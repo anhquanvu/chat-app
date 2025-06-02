@@ -1,0 +1,186 @@
+# Chat Application - Production Environment Configuration
+spring:
+  # Production Database Configuration
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/chatapp_prod?useSSL=true&serverTimezone=UTC&requireSSL=true}
+    username: ${DB_USERNAME:chatapp_prod}
+    password: ${DB_PASSWORD:secure_prod_password}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 50
+      minimum-idle: 10
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      leak-detection-threshold: 60000
+
+  # JPA Production Settings
+  jpa:
+    hibernate:
+      ddl-auto: validate # Never auto-create/update in production
+    show-sql: false # Never show SQL in production
+    properties:
+      hibernate:
+        format_sql: false
+        use_sql_comments: false
+        jdbc:
+          batch_size: 50
+        connection:
+          provider_disables_autocommit: true
+        cache:
+          use_second_level_cache: true
+          region.factory_class: org.hibernate.cache.jcache.JCacheRegionFactory
+
+  # Redis Production Configuration
+#  redis:
+#    host: ${REDIS_HOST:localhost}
+#    port: ${REDIS_PORT:6379}
+#    password: ${REDIS_PASSWORD:secure_redis_password}
+#    database: 0
+#    ssl: ${REDIS_SSL:false}
+#    timeout: 5000ms
+#    lettuce:
+#      pool:
+#        max-active: 50
+#        max-idle: 20
+#        min-idle: 5
+#        max-wait: 5000ms
+
+  # Production Cache Configuration
+  cache:
+    type: redis
+    redis:
+      time-to-live: 600000 # 10 minutes
+
+# Production specific app configuration
+app:
+  # JWT Configuration for Production
+  jwt:
+    secret: ${JWT_SECRET:productionSecretKey123456789012345678901234567890ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz}
+    expiration: ${JWT_EXPIRATION:1800} # 30 minutes for production
+    refresh-expiration: ${JWT_REFRESH_EXPIRATION:43200} # 12 hours for production
+
+  # CORS Configuration - Restrictive for production
+  cors:
+    allowed-origins: ${ALLOWED_ORIGINS:https://yourdomain.com,https://www.yourdomain.com}
+    allowed-methods: GET,POST,PUT,DELETE,OPTIONS
+    allowed-headers: Authorization,Content-Type,X-Requested-With
+    allow-credentials: true
+    max-age: 3600
+
+  # WebSocket Configuration
+  websocket:
+    allowed-origins: ${WS_ALLOWED_ORIGINS:https://yourdomain.com,https://www.yourdomain.com}
+
+  # Rate Limiting - Strict for production
+  rate-limiting:
+    enabled: true
+    requests-per-minute: ${RATE_LIMIT_RPM:30}
+    requests-per-hour: ${RATE_LIMIT_RPH:500}
+    burst-capacity: ${RATE_LIMIT_BURST:5}
+
+  # File Storage for Production
+  storage:
+    upload-dir: ${UPLOAD_DIR:/opt/chatapp/uploads}
+    max-file-size: ${MAX_FILE_SIZE:20971520} # 20MB for production
+    allowed-types: ${ALLOWED_FILE_TYPES:image/jpeg,image/png,image/gif,image/webp,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document}
+
+  # Encryption for Production
+  encryption:
+    enabled: ${ENCRYPTION_ENABLED:true}
+    secret-key: ${ENCRYPTION_KEY:}
+
+  # Production Security Settings
+  security:
+    password-strength: ${PASSWORD_MIN_LENGTH:8}
+    max-login-attempts: ${MAX_LOGIN_ATTEMPTS:3}
+    lockout-duration: ${LOCKOUT_DURATION:1800} # 30 minutes
+
+# Production Logging Configuration
+logging:
+  level:
+    com.revotech.chatapp: INFO
+    org.springframework.security: WARN
+    org.springframework.web: WARN
+    org.springframework.messaging: INFO
+    org.hibernate: WARN
+    org.springframework.data.redis: WARN
+    org.springframework.cache: WARN
+    org.springframework.transaction: WARN
+    com.zaxxer.hikari: WARN
+    root: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: ${LOG_FILE:/opt/chatapp/logs/chatapp.log}
+    max-size: 500MB
+    max-history: 60
+    total-size-cap: 10GB
+  logback:
+    rollingpolicy:
+      max-file-size: 500MB
+      max-history: 60
+
+# Production Management Configuration
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: when-authorized
+      show-components: when-authorized
+    info:
+      show-values: when-authorized
+  metrics:
+    export:
+      prometheus:
+        enabled: ${PROMETHEUS_ENABLED:true}
+    web:
+      server:
+        request:
+          autotime:
+            enabled: true
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+
+# Production Server Configuration
+server:
+  port: ${SERVER_PORT:8080}
+  servlet:
+    context-path: ${CONTEXT_PATH:/}
+  error:
+    include-message: never
+    include-binding-errors: never
+    include-stacktrace: never
+    include-exception: false
+  compression:
+    enabled: true
+    mime-types: text/html,text/xml,text/plain,text/css,text/javascript,application/javascript,application/json
+    min-response-size: 1024
+  http2:
+    enabled: true
+  ssl:
+    enabled: ${SSL_ENABLED:false}
+    key-store: ${SSL_KEYSTORE:}
+    key-store-password: ${SSL_KEYSTORE_PASSWORD:}
+    key-store-type: ${SSL_KEYSTORE_TYPE:PKCS12}
+
+# Production Security Headers
+security:
+  headers:
+    frame: DENY
+    content-type: nosniff
+    xss-protection: 1; mode=block
+    referrer-policy: strict-origin-when-cross-origin
+
+# Production Profile Specific Settings
+debug: false
+
+# Disable development tools in production
+spring.devtools.restart.enabled: false
+  spring.devtools.livere

@@ -1,0 +1,24 @@
+# Configuration for running without Redis
+spring:
+  # Disable Redis auto-configuration
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+
+  # Use simple cache instead of Redis
+  cache:
+    type: simple
+    caffeine:
+      spec: maximumSize=1000,expireAfterAccess=600s
+
+# Disable rate limiting when Redis is not available
+app:
+  rate-limiting:
+    enabled: false # Disable since it depends on Redis
+
+# Logging
+logging:
+  level:
+    org.springframework.data.redis: OFF
+    org.springframework.boot.autoconfigure.data.redis: OFF
