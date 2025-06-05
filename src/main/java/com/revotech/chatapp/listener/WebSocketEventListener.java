@@ -1,6 +1,7 @@
 package com.revotech.chatapp.listener;
 
 import com.revotech.chatapp.model.dto.OnlineUser;
+import com.revotech.chatapp.service.MessageService;
 import com.revotech.chatapp.service.UserSessionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -17,6 +18,7 @@ import org.springframework.web.socket.messaging.SessionDisconnectEvent;
 public class WebSocketEventListener {
 
     private final SimpMessageSendingOperations messagingTemplate;
+    private final MessageService messageService;
     // private final UserSessionService userSessionService; // Implement if needed
 
     @EventListener
@@ -43,6 +45,10 @@ public class WebSocketEventListener {
                     .build();
 
             messagingTemplate.convertAndSend("/topic/user-status", onlineUser);
+
+            // Subscribe to personal message status updates
+            messagingTemplate.convertAndSendToUser(username, "/queue/message-status",
+                    "Connected to message status updates");
         }
     }
 

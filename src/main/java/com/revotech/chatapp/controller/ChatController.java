@@ -62,6 +62,43 @@ public class ChatController {
         messageService.notifyTyping(null, conversationId, userId, username, notification.isTyping());
     }
 
+    // NEW: Message status tracking
+    @MessageMapping("/chat/room/{roomId}/enter")
+    public void enterRoom(@DestinationVariable Long roomId,
+                          SimpMessageHeaderAccessor headerAccessor) {
+        Long userId = (Long) headerAccessor.getSessionAttributes().get("userId");
+
+        // Mark messages as delivered when user enters room
+        messageService.autoMarkMessagesAsDelivered(roomId, null, userId);
+    }
+
+    @MessageMapping("/chat/conversation/{conversationId}/enter")
+    public void enterConversation(@DestinationVariable Long conversationId,
+                                  SimpMessageHeaderAccessor headerAccessor) {
+        Long userId = (Long) headerAccessor.getSessionAttributes().get("userId");
+
+        // Mark messages as delivered when user enters conversation
+        messageService.autoMarkMessagesAsDelivered(null, conversationId, userId);
+    }
+
+    @MessageMapping("/chat/room/{roomId}/read")
+    public void markRoomMessagesAsRead(@DestinationVariable Long roomId,
+                                       SimpMessageHeaderAccessor headerAccessor) {
+        Long userId = (Long) headerAccessor.getSessionAttributes().get("userId");
+
+        // Mark messages as read when user actively reads room
+        messageService.autoMarkMessagesAsRead(roomId, null, userId);
+    }
+
+    @MessageMapping("/chat/conversation/{conversationId}/read")
+    public void markConversationMessagesAsRead(@DestinationVariable Long conversationId,
+                                               SimpMessageHeaderAccessor headerAccessor) {
+        Long userId = (Long) headerAccessor.getSessionAttributes().get("userId");
+
+        // Mark messages as read when user actively reads conversation
+        messageService.autoMarkMessagesAsRead(null, conversationId, userId);
+    }
+
     // Inner class for typing notifications
     public static class TypingNotification {
         private boolean typing;

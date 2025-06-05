@@ -25,7 +25,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -304,15 +306,18 @@ public class RoomServiceImpl implements RoomService {
 
     // Helper methods
     private RoomDTO convertToDTO(Room room, Long currentUserId) {
-        // Get current user's role in room
-        String userRole = room.getMembers().stream()
+        // FIXED: Tạo copy để tránh ConcurrentModificationException
+        Set<RoomMember> membersCopy = new HashSet<>(room.getMembers());
+
+        // Get current user's role in room - SAFE ITERATION
+        String userRole = membersCopy.stream()
                 .filter(member -> member.getUser().getId().equals(currentUserId) && member.getLeftAt() == null)
                 .findFirst()
                 .map(member -> member.getRole().name())
                 .orElse(null);
 
-        // Get active members count
-        long memberCount = room.getMembers().stream()
+        // Get active members count - SAFE ITERATION
+        long memberCount = membersCopy.stream()
                 .filter(member -> member.getLeftAt() == null)
                 .count();
 

@@ -29,6 +29,20 @@ spring:
   jpa:
     hibernate:
       ddl-auto: update # Đổi từ validate về update để tự động tạo/cập nhật schema
+      session:
+        events:
+          log:
+            LOG_QUERIES_SLOWER_THAN_MS: 25
+      collection:
+        # Cải thiện xử lý collection để tránh concurrent modification
+        lazy_loading_threshold: 3
+        temp:
+          use_jdbc_metadata_defaults: false
+      cache:
+        use_second_level_cache: true
+        use_query_cache: true
+        region:
+          factory_class: org.hibernate.cache.jcache.JCacheRegionFactory
     show-sql: false
     properties:
       hibernate:

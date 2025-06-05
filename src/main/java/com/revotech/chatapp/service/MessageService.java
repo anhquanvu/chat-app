@@ -30,6 +30,11 @@ public interface MessageService {
     void removeReaction(String messageId, Long userId);
     List<MessageReactionDTO> getMessageReactions(String messageId);
 
+    // NEW: Auto message status updates
+    void autoMarkMessagesAsRead(Long roomId, Long conversationId, Long userId);
+    void updateMessageDeliveryStatus(String messageId, Long userId);
+    void autoMarkMessagesAsDelivered(Long roomId, Long conversationId, Long userId);
+
     // Real-time features
     void broadcastMessage(ChatMessage message);
     void notifyTyping(Long roomId, Long conversationId, Long userId, String username, boolean isTyping);

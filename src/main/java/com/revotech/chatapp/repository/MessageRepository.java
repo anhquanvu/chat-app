@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -26,6 +27,39 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
 
     @Query("SELECT m FROM Message m WHERE m.room.id = :roomId ORDER BY m.createdAt DESC LIMIT 1")
     Optional<Message> findTopByRoomIdOrderByCreatedAtDesc(@Param("roomId") Long roomId);
+
+    // NEW: Unread messages queries
+    @Query("SELECT m FROM Message m " +
+            "LEFT JOIN MessageDelivery md ON m.id = md.message.id AND md.user.id = :userId " +
+            "WHERE m.room.id = :roomId AND m.sender.id != :userId " +
+            "AND (md.status IS NULL OR md.status != 'READ') " +
+            "AND m.isDeleted = false " +
+            "ORDER BY m.createdAt ASC")
+    List<Message> findUnreadMessagesInRoom(@Param("roomId") Long roomId, @Param("userId") Long userId);
+
+    @Query("SELECT m FROM Message m " +
+            "LEFT JOIN MessageDelivery md ON m.id = md.message.id AND md.user.id = :userId " +
+            "WHERE m.conversation.id = :conversationId AND m.sender.id != :userId " +
+            "AND (md.status IS NULL OR md.status != 'read') " +
+            "AND m.isDeleted = false " +
+            "ORDER BY m.createdAt ASC")
+    List<Message> findUnreadMessagesInConversation(@Param("conversationId") Long conversationId, @Param("userId") Long userId);
+
+    @Query("SELECT m FROM Message m " +
+            "LEFT JOIN MessageDelivery md ON m.id = md.message.id AND md.user.id = :userId " +
+            "WHERE m.room.id = :roomId AND m.sender.id != :userId " +
+            "AND (md.status IS NULL OR md.status = 'SENT') " +
+            "AND m.isDeleted = false " +
+            "ORDER BY m.createdAt ASC")
+    List<Message> findUndeliveredMessagesInRoom(@Param("roomId") Long roomId, @Param("userId") Long userId);
+
+    @Query("SELECT m FROM Message m " +
+            "LEFT JOIN MessageDelivery md ON m.id = md.message.id AND md.user.id = :userId " +
+            "WHERE m.conversation.id = :conversationId AND m.sender.id != :userId " +
+            "AND (md.status IS NULL OR md.status = 'SENT') " +
+            "AND m.isDeleted = false " +
+            "ORDER BY m.createdAt ASC")
+    List<Message> findUndeliveredMessagesInConversation(@Param("conversationId") Long conversationId, @Param("userId") Long userId);
 
     // Search methods
     @Query("SELECT m FROM Message m WHERE " +

@@ -590,4 +590,142 @@ public class MessageServiceImpl implements MessageService {
                 .bio(user.getBio())
                 .build();
     }
+
+    @Override
+    public void autoMarkMessagesAsRead(Long roomId, Long conversationId, Long userId) {
+        List<Message> unreadMessages;
+
+        if (roomId != null) {
+            unreadMessages = messageRepository.findUnreadMessagesInRoom(roomId, userId);
+        } else if (conversationId != null) {
+            unreadMessages = messageRepository.findUnreadMessagesInConversation(conversationId, userId);
+        } else {
+            return;
+        }
+
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new AppException("User not found"));
+
+        for (Message message : unreadMessages) {
+            markSingleMessageAsRead(message, user);
+        }
+    }
+
+    @Override
+    public void autoMarkMessagesAsDelivered(Long roomId, Long conversationId, Long userId) {
+        List<Message> undeliveredMessages;
+
+        if (roomId != null) {
+            undeliveredMessages = messageRepository.findUndeliveredMessagesInRoom(roomId, userId);
+        } else if (conversationId != null) {
+            undeliveredMessages = messageRepository.findUndeliveredMessagesInConversation(conversationId, userId);
+        } else {
+            return;
+        }
+
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new AppException("User not found"));
+
+        for (Message message : undeliveredMessages) {
+            markSingleMessageAsDelivered(message, user);
+        }
+    }
+
+    @Override
+    public void updateMessageDeliveryStatus(String messageId, Long userId) {
+        Message message = messageRepository.findByMessageId(messageId)
+                .orElseThrow(() -> new AppException("Message not found"));
+
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new AppException("User not found"));
+
+        // Skip own messages
+        if (message.getSender().getId().equals(userId)) {
+            return;
+        }
+
+        markSingleMessageAsDelivered(message, user);
+    }
+
+    private void markSingleMessageAsRead(Message message, User user) {
+        var existingDelivery = messageDeliveryRepository.findByMessageAndUser(message, user);
+
+        if (existingDelivery.isPresent()) {
+            MessageDelivery delivery = existingDelivery.get();
+            if (delivery.getStatus() != DeliveryStatus.READ) {
+                delivery.setStatus(DeliveryStatus.READ);
+                delivery.setReadAt(LocalDateTime.now());
+                messageDeliveryRepository.save(delivery);
+
+                broadcastStatusUpdate(message, MessageStatus.READ);
+            }
+        } else {
+            MessageDelivery delivery = MessageDelivery.builder()
+                    .message(message)
+                    .user(user)
+                    .status(DeliveryStatus.READ)
+                    .readAt(LocalDateTime.now())
+                    .build();
+            messageDeliveryRepository.save(delivery);
+
+            broadcastStatusUpdate(message, MessageStatus.READ);
+        }
+    }
+
+    private void markSingleMessageAsDelivered(Message message, User user) {
+        var existingDelivery = messageDeliveryRepository.findByMessageAndUser(message, user);
+
+        if (existingDelivery.isPresent()) {
+            MessageDelivery delivery = existingDelivery.get();
+            if (delivery.getStatus() == null || delivery.getStatus() == DeliveryStatus.SENT) {
+                delivery.setStatus(DeliveryStatus.DELIVERED);
+                messageDeliveryRepository.save(delivery);
+
+                broadcastStatusUpdate(message, MessageStatus.DELIVERED);
+            }
+        } else {
+            MessageDelivery delivery = MessageDelivery.builder()
+                    .message(message)
+                    .user(user)
+                    .status(DeliveryStatus.DELIVERED)
+                    .build();
+            messageDeliveryRepository.save(delivery);
+
+            broadcastStatusUpdate(message, MessageStatus.DELIVERED);
+        }
+    }
+
+    private void broadcastStatusUpdate(Message message, MessageStatus newStatus) {
+        // Update message status
+        message.setStatus(newStatus);
+        messageRepository.save(message);
+
+        // Create status update response
+        Map<String, Object> statusData = new HashMap<>();
+        statusData.put("messageId", message.getMessageId());
+        statusData.put("status", newStatus);
+        statusData.put("timestamp", LocalDateTime.now());
+
+        WebSocketResponse<Map<String, Object>> response = WebSocketResponse.<Map<String, Object>>builder()
+                .type("MESSAGE_STATUS")
+                .action("UPDATE")
+                .data(statusData)
+                .timestamp(LocalDateTime.now())
+                .build();
+
+        String destination = message.getRoom() != null ?
+                "/topic/room/" + message.getRoom().getId() :
+                "/topic/conversation/" + message.getConversation().getId();
+
+        messagingTemplate.convertAndSend(destination, response);
+
+        // Also send to sender specifically
+        messagingTemplate.convertAndSendToUser(
+                message.getSender().getUsername(),
+                "/queue/message-status",
+                response
+        );
+
+        log.debug("Status update broadcasted for message {} to {}", message.getMessageId(), newStatus);
+    }
 }
