@@ -14,6 +14,7 @@ import com.revotech.chatapp.model.enums.DeliveryStatus;
 import com.revotech.chatapp.model.enums.MessageStatus;
 import com.revotech.chatapp.model.enums.MessageType;
 import com.revotech.chatapp.repository.*;
+import com.revotech.chatapp.security.UserPrincipal;
 import com.revotech.chatapp.service.MessageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,14 +23,13 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.messaging.simp.SimpMessageSendingOperations;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
@@ -399,9 +399,12 @@ public class MessageServiceImpl implements MessageService {
     @Transactional(readOnly = true)
     public List<MessageReactionDTO> getMessageReactions(String messageId) {
         Message message = messageRepository.findByMessageId(messageId)
-                .orElseThrow(() -> new AppException("Message not found"));
+                .orElse(null);
 
-        // Group reactions by type và include currentUserReacted
+        if (message == null) {
+            return new ArrayList<>();
+        }
+
         return message.getReactions().stream()
                 .collect(Collectors.groupingBy(MessageReaction::getType))
                 .entrySet().stream()
@@ -411,9 +414,11 @@ public class MessageServiceImpl implements MessageService {
                             .collect(Collectors.toList());
 
                     // Check if current user reacted with this type
-                    // Note: This requires passing current user ID, for now we'll set to false
-                    // TODO: Modify to include current user context
                     boolean currentUserReacted = false;
+                    if (getCurrentUserId() != null) {
+                        currentUserReacted = entry.getValue().stream()
+                                .anyMatch(reaction -> reaction.getUser().getId().equals(getCurrentUserId()));
+                    }
 
                     return MessageReactionDTO.builder()
                             .type(entry.getKey())
@@ -430,9 +435,16 @@ public class MessageServiceImpl implements MessageService {
                 .collect(Collectors.toList());
     }
 
-    private boolean isCurrentUserReacted(List<MessageReaction> reactions, Long currentUserId) {
-        return reactions.stream()
-                .anyMatch(reaction -> reaction.getUser().getId().equals(currentUserId));
+    private Long getCurrentUserId() {
+        try {
+            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+            if (authentication != null && authentication.getPrincipal() instanceof UserPrincipal) {
+                return ((UserPrincipal) authentication.getPrincipal()).getId();
+            }
+        } catch (Exception e) {
+            // Ignore
+        }
+        return null;
     }
 
     @Override
@@ -539,7 +551,10 @@ public class MessageServiceImpl implements MessageService {
 
     // Helper methods
     private ChatMessage convertMessageToDTO(Message message) {
-        return ChatMessage.builder()
+        // Get reactions for this message
+        List<MessageReactionDTO> reactions = getMessageReactions(message.getMessageId());
+
+        ChatMessage chatMessage = ChatMessage.builder()
                 .id(message.getMessageId())
                 .content(message.getContent())
                 .senderId(message.getSender().getId())
@@ -555,7 +570,14 @@ public class MessageServiceImpl implements MessageService {
                 .isEdited(message.getIsEdited())
                 .editedAt(message.getEditedAt())
                 .build();
+
+        // Set reactions - THÊM DÒNG NÀY
+        chatMessage.setReactions(reactions);
+
+        return chatMessage;
     }
+
+
 
     private UserSummaryDTO convertToUserSummary(User user) {
         return UserSummaryDTO.builder()

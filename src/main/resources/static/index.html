@@ -1687,13 +1687,13 @@
         }, 100);
     }
 
-    function showMessage(message) {
+    function showMessage(message, shouldScroll = true) {
         const container = document.getElementById('messagesContainer');
+        const typingIndicator = container.querySelector('.typing-indicator');
 
         // Check if message already exists (avoid duplicates)
         const existingMessage = container.querySelector(`[data-message-id="${message.id}"]`);
         if (existingMessage) {
-            // Update existing message if needed
             return;
         }
 
@@ -1704,8 +1704,8 @@
         if (message.type === 'JOIN' || message.type === 'LEAVE') {
             messageClass += 'system';
             messageElement.innerHTML = `
-                <div class="message-content">${message.content || `${message.senderName} đã ${message.type === 'JOIN' ? 'tham gia' : 'rời khỏi'} phòng chat`}</div>
-            `;
+            <div class="message-content">${message.content || `${message.senderName} đã ${message.type === 'JOIN' ? 'tham gia' : 'rời khỏi'} phòng chat`}</div>
+        `;
         } else if (message.type === 'CHAT') {
             messageClass += isOwnMessage ? 'own' : 'chat';
             const timestamp = new Date(message.timestamp).toLocaleTimeString('vi-VN', {
@@ -1715,34 +1715,28 @@
 
             const messageId = message.id;
             const statusIcon = getStatusIcon(message.status);
+
+            // THAY ĐỔI CHÍNH: Lấy reactions từ message object thay vì mặc định empty
             const reactions = message.reactions || [];
 
             messageElement.innerHTML = `
-                ${!isOwnMessage ? `<div class="message-header">
-                    <span class="message-sender">${message.senderName}</span>
-                    <span class="message-time">${timestamp}</span>
+            ${!isOwnMessage ? `<div class="message-header">
+                <span class="message-sender">${message.senderName}</span>
+                <span class="message-time">${timestamp}</span>
+            </div>` : ''}
+            <div class="message-content">${message.content}</div>
+            <div class="message-reactions" id="reactions-${messageId}">
+                ${renderReactions(reactions, messageId)}
+                <div class="add-reaction-btn" onclick="showReactionPicker('${messageId}', event)">➕</div>
+            </div>
+            <div class="message-footer">
+                ${isOwnMessage ? `<div class="message-status">
+                    <span class="status-icon ${message.status ? message.status.toLowerCase() : 'sent'}">${statusIcon}</span>
+                    <span class="status-text">${getStatusText(message.status)}</span>
                 </div>` : ''}
-                <div class="message-content">${message.content}</div>
-                ${reactions.length > 0 ? `<div class="message-reactions">
-                    ${reactions.map(reaction => `
-                        <div class="reaction-item ${reaction.currentUserReacted ? 'own-reaction' : ''}"
-                             onclick="toggleReaction('${messageId}', '${reaction.type}')">
-                            <span class="reaction-emoji">${reaction.emoji}</span>
-                            <span class="reaction-count">${reaction.count}</span>
-                        </div>
-                    `).join('')}
-                    <div class="add-reaction-btn" onclick="showReactionPicker('${messageId}', event)">➕</div>
-                </div>` : `<div class="message-reactions">
-                    <div class="add-reaction-btn" onclick="showReactionPicker('${messageId}', event)">➕</div>
-                </div>`}
-                <div class="message-footer">
-                    ${isOwnMessage ? `<div class="message-status">
-                        <span class="status-icon ${message.status ? message.status.toLowerCase() : 'sent'}">${statusIcon}</span>
-                        <span class="status-text">${getStatusText(message.status)}</span>
-                    </div>` : ''}
-                    ${isOwnMessage ? `<div class="message-time">${timestamp}</div>` : ''}
-                </div>
-            `;
+                ${isOwnMessage ? `<div class="message-time">${timestamp}</div>` : ''}
+            </div>
+        `;
 
             // Add double-click to edit for own messages
             if (isOwnMessage) {
@@ -1752,15 +1746,33 @@
 
         messageElement.className = messageClass;
         messageElement.dataset.messageId = message.id;
-        container.appendChild(messageElement);
+
+        // Insert before typing indicator
+        container.insertBefore(messageElement, typingIndicator);
 
         // Auto scroll to bottom when new message added
-        container.scrollTop = container.scrollHeight;
+        if (shouldScroll) {
+            container.scrollTop = container.scrollHeight;
+        }
 
         // Mark message as read if not own message
         if (!isOwnMessage && currentChatType && currentChatId) {
-            setTimeout(() => markMessageAsRead(message.id), 1000); // Delay to simulate reading
+            setTimeout(() => markMessageAsRead(message.id), 1000);
         }
+    }
+
+    function renderReactions(reactions, messageId) {
+        if (!reactions || reactions.length === 0) {
+            return '';
+        }
+
+        return reactions.map(reaction => `
+        <div class="reaction-item ${reaction.currentUserReacted ? 'own-reaction' : ''}"
+             onclick="toggleReaction('${messageId}', '${reaction.type}')">
+            <span class="reaction-emoji">${reaction.emoji}</span>
+            <span class="reaction-count">${reaction.count}</span>
+        </div>
+    `).join('');
     }
 
     function getStatusIcon(status) {
@@ -1913,14 +1925,33 @@
             body: JSON.stringify(request)
         }).then(response => {
             if (response.ok) {
-                console.log('Reaction added successfully');
+                // Reload reactions for this message
+                loadMessageReactions(currentMessageForReaction);
                 hideReactionPicker();
-            } else {
-                console.error('Failed to add reaction');
             }
         }).catch(error => {
             console.error('Error adding reaction:', error);
         });
+    }
+
+    async function loadMessageReactions(messageId) {
+        try {
+            const response = await fetch(`/api/messages/${messageId}/reactions`, {
+                headers: {
+                    'Authorization': 'Bearer ' + authToken
+                }
+            });
+
+            if (response.ok) {
+                const reactions = await response.json();
+                handleReactionUpdate({
+                    messageId: messageId,
+                    reactions: reactions
+                });
+            }
+        } catch (error) {
+            console.error('Error loading message reactions:', error);
+        }
     }
 
     function toggleReaction(messageId, reactionType) {
@@ -1947,68 +1978,30 @@
     }
 
     function handleReactionUpdate(data) {
-        console.log('Reaction update data:', data);
-
+        // data có thể là array reactions hoặc object chứa messageId và reactions
         let messageId, reactions;
 
-        // Handle different data formats
-        if (data.messageId && data.reactions) {
+        if (Array.isArray(data)) {
+            // Nếu data là array reactions, cần tìm messageId từ context
+            reactions = data;
+            messageId = currentMessageForReaction; // fallback
+        } else if (data.messageId && data.reactions) {
+            // Nếu data có cấu trúc {messageId, reactions}
             messageId = data.messageId;
             reactions = data.reactions;
-        } else if (Array.isArray(data)) {
-            // Legacy format - use currentMessageForReaction
-            reactions = data;
-            messageId = currentMessageForReaction;
         } else {
-            console.error('Invalid reaction update data format:', data);
+            console.warn('Invalid reaction update data:', data);
             return;
         }
 
-        if (!messageId) {
-            console.error('No message ID available for reaction update');
-            return;
+        // Tìm và cập nhật reactions container
+        const reactionsContainer = document.getElementById(`reactions-${messageId}`);
+        if (reactionsContainer) {
+            reactionsContainer.innerHTML = `
+            ${renderReactions(reactions, messageId)}
+            <div class="add-reaction-btn" onclick="showReactionPicker('${messageId}', event)">➕</div>
+        `;
         }
-
-        // Find the specific message element
-        const targetMessage = document.querySelector(`[data-message-id="${messageId}"]`);
-        if (!targetMessage) {
-            console.error('Target message not found:', messageId);
-            return;
-        }
-
-        // Find or create reactions container
-        let reactionsContainer = targetMessage.querySelector('.message-reactions');
-        if (!reactionsContainer) {
-            const messageFooter = targetMessage.querySelector('.message-footer');
-            reactionsContainer = document.createElement('div');
-            reactionsContainer.className = 'message-reactions';
-            if (messageFooter) {
-                targetMessage.insertBefore(reactionsContainer, messageFooter);
-            } else {
-                targetMessage.appendChild(reactionsContainer);
-            }
-        }
-
-        // Build reactions HTML
-        let reactionsHTML = '';
-
-        if (reactions && reactions.length > 0) {
-            reactionsHTML = reactions.map(reaction => `
-            <div class="reaction-item ${reaction.currentUserReacted ? 'own-reaction' : ''}"
-                 onclick="toggleReaction('${messageId}', '${reaction.type}')">
-                <span class="reaction-emoji">${reaction.emoji}</span>
-                <span class="reaction-count">${reaction.count}</span>
-            </div>
-        `).join('');
-        }
-
-        // Add reaction button
-        reactionsHTML += `<div class="add-reaction-btn" onclick="showReactionPicker('${messageId}', event)">➕</div>`;
-
-        // Update HTML
-        reactionsContainer.innerHTML = reactionsHTML;
-
-        console.log('Reactions updated for message:', messageId);
     }
 
     // Mark message as read
