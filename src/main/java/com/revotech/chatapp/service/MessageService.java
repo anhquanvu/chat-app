@@ -8,6 +8,7 @@ import com.revotech.chatapp.model.dto.request.SendMessageRequest;
 import org.springframework.data.domain.Page;
 
 import java.util.List;
+import java.util.Set;
 
 public interface MessageService {
     // Room messages
@@ -43,4 +44,11 @@ public interface MessageService {
     Page<ChatMessage> searchMessages(String keyword, Long userId, int page, int size);
     Page<ChatMessage> searchMessagesInRoom(Long roomId, String keyword, Long userId, int page, int size);
     Page<ChatMessage> searchMessagesInConversation(Long conversationId, String keyword, Long userId, int page, int size);
+
+    //auto-read tracking methods
+    void trackUserEnterChat(Long roomId, Long conversationId, Long userId, String sessionId);
+    void trackUserLeaveChat(Long roomId, Long conversationId, Long userId, String sessionId);
+    void autoMarkMessagesAsReadForActiveUsers(String messageId);
+    Set<Long> getActiveUsersInChat(Long roomId, Long conversationId);
+    void broadcastReadStatusUpdate(String messageId, Long readerId);
 }

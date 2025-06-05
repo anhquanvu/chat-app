@@ -34,4 +34,7 @@ public interface MessageDeliveryRepository extends JpaRepository<MessageDelivery
 
     @Query("SELECT md FROM MessageDelivery md WHERE md.message.conversation.id = :conversationId AND md.user.id = :userId AND md.status != 'read' ORDER BY md.deliveredAt ASC")
     List<MessageDelivery> findUnreadMessagesInConversation(@Param("conversationId") Long conversationId, @Param("userId") Long userId);
+
+    @Query("SELECT COUNT(md) FROM MessageDelivery md WHERE md.message = :message AND md.status = :status")
+    Long countByMessageAndStatus(@Param("message") Message message, @Param("status") DeliveryStatus status);
 }

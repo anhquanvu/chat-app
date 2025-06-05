@@ -30,6 +30,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 @Service
@@ -45,6 +47,121 @@ public class MessageServiceImpl implements MessageService {
     private final MessageReactionRepository messageReactionRepository;
     private final MessageDeliveryRepository messageDeliveryRepository;
     private final SimpMessageSendingOperations messagingTemplate;
+    private final RoomMemberRepository roomMemberRepository;
+
+    private final Map<String, Set<String>> activeChatSessions = new ConcurrentHashMap<>();
+    private final Map<String, Long> sessionToUser = new ConcurrentHashMap<>();
+
+    @Override
+    public void trackUserEnterChat(Long roomId, Long conversationId, Long userId, String sessionId) {
+        String chatKey = buildChatKey(roomId, conversationId);
+
+        // Track session in chat
+        activeChatSessions.computeIfAbsent(chatKey, k -> ConcurrentHashMap.newKeySet())
+                .add(sessionId);
+        sessionToUser.put(sessionId, userId);
+
+        // Auto mark existing unread messages as read
+        autoMarkMessagesAsRead(roomId, conversationId, userId);
+
+        log.debug("User {} entered chat {} with session {}", userId, chatKey, sessionId);
+    }
+
+    @Override
+    public void trackUserLeaveChat(Long roomId, Long conversationId, Long userId, String sessionId) {
+        String chatKey = buildChatKey(roomId, conversationId);
+
+        Set<String> sessions = activeChatSessions.get(chatKey);
+        if (sessions != null) {
+            sessions.remove(sessionId);
+            if (sessions.isEmpty()) {
+                activeChatSessions.remove(chatKey);
+            }
+        }
+        sessionToUser.remove(sessionId);
+
+        log.debug("User {} left chat {} with session {}", userId, chatKey, sessionId);
+    }
+
+    @Override
+    public void autoMarkMessagesAsReadForActiveUsers(String messageId) {
+        Message message = messageRepository.findByMessageId(messageId)
+                .orElse(null);
+
+        if (message == null) return;
+
+        String chatKey = buildChatKey(
+                message.getRoom() != null ? message.getRoom().getId() : null,
+                message.getConversation() != null ? message.getConversation().getId() : null
+        );
+
+        Set<Long> activeUsers = getActiveUsersInChat(
+                message.getRoom() != null ? message.getRoom().getId() : null,
+                message.getConversation() != null ? message.getConversation().getId() : null
+        );
+
+        // Mark as read for all active users (except sender)
+        for (Long userId : activeUsers) {
+            if (!userId.equals(message.getSender().getId())) {
+                markSingleMessageAsRead(message, userRepository.findById(userId).orElse(null));
+                broadcastReadStatusUpdate(messageId, userId);
+            }
+        }
+    }
+
+    @Override
+    public Set<Long> getActiveUsersInChat(Long roomId, Long conversationId) {
+        String chatKey = buildChatKey(roomId, conversationId);
+        Set<String> sessions = activeChatSessions.get(chatKey);
+
+        if (sessions == null || sessions.isEmpty()) {
+            return Set.of();
+        }
+
+        return sessions.stream()
+                .map(sessionToUser::get)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+    }
+
+    @Override
+    public void broadcastReadStatusUpdate(String messageId, Long readerId) {
+        Message message = messageRepository.findByMessageId(messageId).orElse(null);
+        if (message == null) return;
+
+        User reader = userRepository.findById(readerId).orElse(null);
+        if (reader == null) return;
+
+        // Create read status update
+        Map<String, Object> readStatusData = new HashMap<>();
+        readStatusData.put("messageId", messageId);
+        readStatusData.put("readerId", readerId);
+        readStatusData.put("readerName", reader.getFullName());
+        readStatusData.put("timestamp", LocalDateTime.now());
+
+        WebSocketResponse<Map<String, Object>> response = WebSocketResponse.<Map<String, Object>>builder()
+                .type("MESSAGE_READ")
+                .action("UPDATE")
+                .data(readStatusData)
+                .senderId(readerId)
+                .timestamp(LocalDateTime.now())
+                .build();
+
+        String destination = message.getRoom() != null ?
+                "/topic/room/" + message.getRoom().getId() :
+                "/topic/conversation/" + message.getConversation().getId();
+
+        messagingTemplate.convertAndSend(destination, response);
+
+        // Send to message sender specifically
+        messagingTemplate.convertAndSendToUser(
+                message.getSender().getUsername(),
+                "/queue/read-receipts",
+                response
+        );
+
+        log.debug("Broadcast read status for message {} by user {}", messageId, readerId);
+    }
 
     @Override
     public ChatMessage sendMessage(SendMessageRequest request, Long senderId) {
@@ -91,6 +208,16 @@ public class MessageServiceImpl implements MessageService {
 
         // Broadcast message
         broadcastMessage(chatMessage);
+
+        final String messageId = message.getMessageId(); // Make effectively final
+        CompletableFuture.runAsync(() -> {
+            try {
+                Thread.sleep(1000); // Give time for message to be displayed
+                autoMarkMessagesAsReadForActiveUsers(messageId);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
 
         return chatMessage;
     }
@@ -648,6 +775,10 @@ public class MessageServiceImpl implements MessageService {
     }
 
     private void markSingleMessageAsRead(Message message, User user) {
+        if (user == null || message.getSender().getId().equals(user.getId())) {
+            return; // Don't mark own messages as read
+        }
+
         var existingDelivery = messageDeliveryRepository.findByMessageAndUser(message, user);
 
         if (existingDelivery.isPresent()) {
@@ -656,8 +787,6 @@ public class MessageServiceImpl implements MessageService {
                 delivery.setStatus(DeliveryStatus.READ);
                 delivery.setReadAt(LocalDateTime.now());
                 messageDeliveryRepository.save(delivery);
-
-                broadcastStatusUpdate(message, MessageStatus.READ);
             }
         } else {
             MessageDelivery delivery = MessageDelivery.builder()
@@ -667,9 +796,10 @@ public class MessageServiceImpl implements MessageService {
                     .readAt(LocalDateTime.now())
                     .build();
             messageDeliveryRepository.save(delivery);
-
-            broadcastStatusUpdate(message, MessageStatus.READ);
         }
+
+        // Update message overall status
+        updateMessageOverallStatus(message);
     }
 
     private void markSingleMessageAsDelivered(Message message, User user) {
@@ -728,4 +858,42 @@ public class MessageServiceImpl implements MessageService {
 
         log.debug("Status update broadcasted for message {} to {}", message.getMessageId(), newStatus);
     }
+
+
+    private String buildChatKey(Long roomId, Long conversationId) {
+        if (roomId != null) {
+            return "room:" + roomId;
+        } else if (conversationId != null) {
+            return "conversation:" + conversationId;
+        }
+        throw new IllegalArgumentException("Either roomId or conversationId must be provided");
+    }
+
+    private void updateMessageOverallStatus(Message message) {
+        // Count total recipients (room members or conversation participants)
+        long totalRecipients = 0;
+        long readCount = 0;
+
+        if (message.getRoom() != null) {
+            totalRecipients = roomMemberRepository.countActiveMembers(message.getRoom().getId()) - 1; // Exclude sender
+            readCount = messageDeliveryRepository.countByMessageAndStatus(message, DeliveryStatus.READ);
+        } else if (message.getConversation() != null) {
+            totalRecipients = 1; // Direct conversation = 1 other participant
+            readCount = messageDeliveryRepository.countByMessageAndStatus(message, DeliveryStatus.READ);
+        }
+
+        MessageStatus newStatus = message.getStatus();
+        if (readCount == totalRecipients && totalRecipients > 0) {
+            newStatus = MessageStatus.READ;
+        } else if (readCount > 0) {
+            newStatus = MessageStatus.DELIVERED;
+        }
+
+        if (newStatus != message.getStatus()) {
+            message.setStatus(newStatus);
+            messageRepository.save(message);
+            broadcastStatusUpdate(message, newStatus);
+        }
+    }
+
 }

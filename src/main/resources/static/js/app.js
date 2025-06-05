@@ -11,6 +11,8 @@
     let isCurrentlyTyping = false;
     let typingUsers = new Set();
     let currentMessageForReaction = null;
+    let currentChatKey = null;
+    let readReceipts = new Map();
 
     // Authentication functions
     function switchTab(tab) {
@@ -31,6 +33,7 @@
 
     // Sidebar navigation
     function switchSidebarTab(tab, event) {
+        leaveCurrentChat();
         document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.remove('active'));
         document.querySelectorAll('.sidebar-panel').forEach(p => p.classList.remove('active'));
 
@@ -300,14 +303,6 @@ document.addEventListener('DOMContentLoaded', function() {
     monitorConnection();
 });
 
-window.addEventListener('beforeunload', function() {
-    if (stompClient && connected) {
-        stompClient.disconnect(function() {
-            console.log('STOMP disconnected gracefully');
-        });
-    }
-});
-
 async function refreshAuthToken() {
         if (!refreshToken) {
             logout();
@@ -504,6 +499,13 @@ async function refreshAuthToken() {
             }
         });
 
+        stompClient.subscribe(`/user/queue/read-receipts`, function (message) {
+            const readStatus = JSON.parse(message.body);
+            handleReadReceiptUpdate(readStatus.data);
+        });
+
+        stompClient.send(`/app/chat/conversation/${conversationId}/enter`, {}, JSON.stringify({}));
+
         loadConversationMessages(conversationId);
     }
 
@@ -541,8 +543,57 @@ async function refreshAuthToken() {
             }
         });
 
+        stompClient.send(`/app/chat/room/${roomId}/enter`, {}, JSON.stringify({}));
+
         loadRoomMessages(roomId);
     }
+
+function leaveCurrentChat() {
+    if (!currentChatKey || !stompClient || !connected) return;
+
+    if (currentChatType === 'room') {
+        stompClient.send(`/app/chat/room/${currentChatId}/leave`, {}, JSON.stringify({}));
+    } else if (currentChatType === 'conversation') {
+        stompClient.send(`/app/chat/conversation/${currentChatId}/leave`, {}, JSON.stringify({}));
+    }
+}
+
+function handleReadReceiptUpdate(data) {
+    const messageId = data.messageId;
+    const readerName = data.readerName;
+
+    if (!readReceipts.has(messageId)) {
+        readReceipts.set(messageId, new Set());
+    }
+    readReceipts.get(messageId).add(readerName);
+
+    // Update UI to show read status
+    updateMessageReadStatus(messageId);
+}
+
+function updateMessageReadStatus(messageId) {
+    const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
+    if (!messageElement) return;
+
+    const readers = readReceipts.get(messageId);
+    if (!readers || readers.size === 0) return;
+
+    const statusElement = messageElement.querySelector('.message-footer .message-status');
+    if (statusElement) {
+        const readersList = Array.from(readers).join(', ');
+        statusElement.innerHTML = `
+            <span class="status-icon read">✓✓</span>
+            <span class="status-text">Đã xem bởi ${readersList}</span>
+        `;
+    }
+}
+
+window.addEventListener('beforeunload', function() {
+    leaveCurrentChat();
+    if (stompClient && connected) {
+        stompClient.disconnect();
+    }
+});
 
 function handleMessageStatusUpdate(data) {
     if (data && data.messageId && data.status) {

@@ -42,6 +42,55 @@ public class ChatController {
         log.info("Message sent to conversation {}: {}", conversationId, chatMessage.getContent());
     }
 
+    // ENHANCED: Proper enter/leave tracking
+    @MessageMapping("/chat/room/{roomId}/enter")
+    public void enterRoom(@DestinationVariable Long roomId,
+                          SimpMessageHeaderAccessor headerAccessor) {
+        Long userId = (Long) headerAccessor.getSessionAttributes().get("userId");
+        String sessionId = headerAccessor.getSessionId();
+
+        // Track user as active in this room
+        messageService.trackUserEnterChat(roomId, null, userId, sessionId);
+
+        log.debug("User {} entered room {} with session {}", userId, roomId, sessionId);
+    }
+
+    @MessageMapping("/chat/conversation/{conversationId}/enter")
+    public void enterConversation(@DestinationVariable Long conversationId,
+                                  SimpMessageHeaderAccessor headerAccessor) {
+        Long userId = (Long) headerAccessor.getSessionAttributes().get("userId");
+        String sessionId = headerAccessor.getSessionId();
+
+        // Track user as active in this conversation
+        messageService.trackUserEnterChat(null, conversationId, userId, sessionId);
+
+        log.debug("User {} entered conversation {} with session {}", userId, conversationId, sessionId);
+    }
+
+    @MessageMapping("/chat/room/{roomId}/leave")
+    public void leaveRoom(@DestinationVariable Long roomId,
+                          SimpMessageHeaderAccessor headerAccessor) {
+        Long userId = (Long) headerAccessor.getSessionAttributes().get("userId");
+        String sessionId = headerAccessor.getSessionId();
+
+        // Remove user from active tracking
+        messageService.trackUserLeaveChat(roomId, null, userId, sessionId);
+
+        log.debug("User {} left room {} with session {}", userId, roomId, sessionId);
+    }
+
+    @MessageMapping("/chat/conversation/{conversationId}/leave")
+    public void leaveConversation(@DestinationVariable Long conversationId,
+                                  SimpMessageHeaderAccessor headerAccessor) {
+        Long userId = (Long) headerAccessor.getSessionAttributes().get("userId");
+        String sessionId = headerAccessor.getSessionId();
+
+        // Remove user from active tracking
+        messageService.trackUserLeaveChat(null, conversationId, userId, sessionId);
+
+        log.debug("User {} left conversation {} with session {}", userId, conversationId, sessionId);
+    }
+
     @MessageMapping("/chat/typing/room/{roomId}")
     public void notifyTypingInRoom(@DestinationVariable Long roomId,
                                    @Payload TypingNotification notification,
@@ -60,43 +109,6 @@ public class ChatController {
         String username = (String) headerAccessor.getSessionAttributes().get("username");
 
         messageService.notifyTyping(null, conversationId, userId, username, notification.isTyping());
-    }
-
-    // NEW: Message status tracking
-    @MessageMapping("/chat/room/{roomId}/enter")
-    public void enterRoom(@DestinationVariable Long roomId,
-                          SimpMessageHeaderAccessor headerAccessor) {
-        Long userId = (Long) headerAccessor.getSessionAttributes().get("userId");
-
-        // Mark messages as delivered when user enters room
-        messageService.autoMarkMessagesAsDelivered(roomId, null, userId);
-    }
-
-    @MessageMapping("/chat/conversation/{conversationId}/enter")
-    public void enterConversation(@DestinationVariable Long conversationId,
-                                  SimpMessageHeaderAccessor headerAccessor) {
-        Long userId = (Long) headerAccessor.getSessionAttributes().get("userId");
-
-        // Mark messages as delivered when user enters conversation
-        messageService.autoMarkMessagesAsDelivered(null, conversationId, userId);
-    }
-
-    @MessageMapping("/chat/room/{roomId}/read")
-    public void markRoomMessagesAsRead(@DestinationVariable Long roomId,
-                                       SimpMessageHeaderAccessor headerAccessor) {
-        Long userId = (Long) headerAccessor.getSessionAttributes().get("userId");
-
-        // Mark messages as read when user actively reads room
-        messageService.autoMarkMessagesAsRead(roomId, null, userId);
-    }
-
-    @MessageMapping("/chat/conversation/{conversationId}/read")
-    public void markConversationMessagesAsRead(@DestinationVariable Long conversationId,
-                                               SimpMessageHeaderAccessor headerAccessor) {
-        Long userId = (Long) headerAccessor.getSessionAttributes().get("userId");
-
-        // Mark messages as read when user actively reads conversation
-        messageService.autoMarkMessagesAsRead(null, conversationId, userId);
     }
 
     // Inner class for typing notifications
