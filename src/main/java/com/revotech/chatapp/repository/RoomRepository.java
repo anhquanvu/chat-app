@@ -15,8 +15,21 @@ import java.util.Optional;
 @Repository
 public interface RoomRepository extends JpaRepository<Room, Long> {
 
+    // FIX: Sử dụng JOIN FETCH để tải trước members và tránh lazy loading issues
+    @Query("SELECT DISTINCT r FROM Room r " +
+            "LEFT JOIN FETCH r.members m " +
+            "LEFT JOIN FETCH m.user " +
+            "WHERE m.user.id = :userId AND m.leftAt IS NULL " +
+            "ORDER BY r.lastActivityAt DESC")
+    List<Room> findRoomsByUserIdWithMembers(@Param("userId") Long userId);
+
+    // Query phụ để pagination (không dùng FETCH với Page)
     @Query("SELECT r FROM Room r JOIN r.members m WHERE m.user.id = :userId AND m.leftAt IS NULL ORDER BY r.lastActivityAt DESC")
     Page<Room> findRoomsByUserId(@Param("userId") Long userId, Pageable pageable);
+
+    // Thêm method để tìm Room với members được fetch trước
+    @Query("SELECT r FROM Room r LEFT JOIN FETCH r.members WHERE r.id = :roomId")
+    Optional<Room> findByIdWithMembers(@Param("roomId") Long roomId);
 
     @Query("SELECT r FROM Room r WHERE r.type = :type AND r.isArchived = false ORDER BY r.createdAt DESC")
     List<Room> findByTypeAndNotArchived(@Param("type") RoomType type);

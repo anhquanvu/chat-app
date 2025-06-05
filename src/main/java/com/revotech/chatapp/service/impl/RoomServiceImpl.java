@@ -18,6 +18,7 @@ import com.revotech.chatapp.service.RoomService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -25,9 +26,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.HashSet;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -88,17 +89,22 @@ public class RoomServiceImpl implements RoomService {
 
         log.info("Room {} created by user {}", room.getId(), creatorId);
 
-        return convertToDTO(room, creatorId);
+        // Reload room with members for DTO conversion
+        Room roomWithMembers = roomRepository.findByIdWithMembers(room.getId())
+                .orElse(room);
+
+        return convertToDTO(roomWithMembers, creatorId);
     }
 
     @Override
     @Transactional(readOnly = true)
     public RoomDTO getRoomById(Long roomId, Long userId) {
-        Room room = roomRepository.findById(roomId)
+        Room room = roomRepository.findByIdWithMembers(roomId)
                 .orElseThrow(() -> new AppException("Room not found"));
 
-        // Check if user is member
-        boolean isMember = room.getMembers().stream()
+        // Check if user is member - use repository query để tránh lazy loading
+        List<RoomMember> activeMembers = roomMemberRepository.findActiveRoomMembers(roomId);
+        boolean isMember = activeMembers.stream()
                 .anyMatch(member -> member.getUser().getId().equals(userId));
 
         if (!isMember) {
@@ -113,18 +119,40 @@ public class RoomServiceImpl implements RoomService {
     public Page<RoomDTO> getUserRooms(Long userId, int page, int size) {
         Pageable pageable = PageRequest.of(page, size, Sort.by("lastActivityAt").descending());
 
-        Page<Room> rooms = roomRepository.findRoomsByUserId(userId, pageable);
+        // FIX: Sử dụng cách tiếp cận khác để tránh ConcurrentModificationException
+        // Step 1: Lấy danh sách Room IDs với pagination
+        Page<Room> roomPage = roomRepository.findRoomsByUserId(userId, pageable);
 
-        return rooms.map(room -> convertToDTO(room, userId));
+        if (roomPage.isEmpty()) {
+            return new PageImpl<>(Collections.emptyList(), pageable, 0);
+        }
+
+        // Step 2: Lấy Room details với members được fetch trước
+        List<Long> roomIds = roomPage.getContent().stream()
+                .map(Room::getId)
+                .collect(Collectors.toList());
+
+        List<Room> roomsWithMembers = roomIds.stream()
+                .map(roomId -> roomRepository.findByIdWithMembers(roomId).orElse(null))
+                .filter(room -> room != null)
+                .collect(Collectors.toList());
+
+        // Step 3: Convert sang DTO
+        List<RoomDTO> roomDTOs = roomsWithMembers.stream()
+                .map(room -> convertToDTO(room, userId))
+                .collect(Collectors.toList());
+
+        return new PageImpl<>(roomDTOs, pageable, roomPage.getTotalElements());
     }
 
     @Override
     public RoomDTO updateRoom(Long roomId, CreateRoomRequest request, Long userId) {
-        Room room = roomRepository.findById(roomId)
+        Room room = roomRepository.findByIdWithMembers(roomId)
                 .orElseThrow(() -> new AppException("Room not found"));
 
         // Check if user has permission to update
-        RoomMember member = room.getMembers().stream()
+        List<RoomMember> activeMembers = roomMemberRepository.findActiveRoomMembers(roomId);
+        RoomMember member = activeMembers.stream()
                 .filter(m -> m.getUser().getId().equals(userId))
                 .findFirst()
                 .orElseThrow(() -> new AppException("You are not a member of this room"));
@@ -148,11 +176,12 @@ public class RoomServiceImpl implements RoomService {
 
     @Override
     public void deleteRoom(Long roomId, Long userId) {
-        Room room = roomRepository.findById(roomId)
+        Room room = roomRepository.findByIdWithMembers(roomId)
                 .orElseThrow(() -> new AppException("Room not found"));
 
         // Check if user is owner
-        RoomMember member = room.getMembers().stream()
+        List<RoomMember> activeMembers = roomMemberRepository.findActiveRoomMembers(roomId);
+        RoomMember member = activeMembers.stream()
                 .filter(m -> m.getUser().getId().equals(userId))
                 .findFirst()
                 .orElseThrow(() -> new AppException("You are not a member of this room"));
@@ -175,7 +204,8 @@ public class RoomServiceImpl implements RoomService {
                 .orElseThrow(() -> new AppException("User not found"));
 
         // Check if user is already a member
-        boolean isMember = room.getMembers().stream()
+        List<RoomMember> activeMembers = roomMemberRepository.findActiveRoomMembers(roomId);
+        boolean isMember = activeMembers.stream()
                 .anyMatch(member -> member.getUser().getId().equals(userId));
 
         if (isMember) {
@@ -199,7 +229,8 @@ public class RoomServiceImpl implements RoomService {
         Room room = roomRepository.findById(roomId)
                 .orElseThrow(() -> new AppException("Room not found"));
 
-        RoomMember member = room.getMembers().stream()
+        List<RoomMember> activeMembers = roomMemberRepository.findActiveRoomMembers(roomId);
+        RoomMember member = activeMembers.stream()
                 .filter(m -> m.getUser().getId().equals(userId))
                 .findFirst()
                 .orElseThrow(() -> new AppException("You are not a member of this room"));
@@ -222,15 +253,15 @@ public class RoomServiceImpl implements RoomService {
                 .orElseThrow(() -> new AppException("Room not found"));
 
         // Check if user is member
-        boolean isMember = room.getMembers().stream()
+        List<RoomMember> activeMembers = roomMemberRepository.findActiveRoomMembers(roomId);
+        boolean isMember = activeMembers.stream()
                 .anyMatch(member -> member.getUser().getId().equals(userId));
 
         if (!isMember) {
             throw new AppException("You are not a member of this room");
         }
 
-        return room.getMembers().stream()
-                .filter(member -> member.getLeftAt() == null) // Only active members
+        return activeMembers.stream()
                 .map(this::convertMemberToDTO)
                 .collect(Collectors.toList());
     }
@@ -244,7 +275,8 @@ public class RoomServiceImpl implements RoomService {
                 .orElseThrow(() -> new AppException("User not found"));
 
         // Check if admin has permission
-        RoomMember admin = room.getMembers().stream()
+        List<RoomMember> activeMembers = roomMemberRepository.findActiveRoomMembers(roomId);
+        RoomMember admin = activeMembers.stream()
                 .filter(m -> m.getUser().getId().equals(adminId))
                 .findFirst()
                 .orElseThrow(() -> new AppException("You are not a member of this room"));
@@ -254,8 +286,8 @@ public class RoomServiceImpl implements RoomService {
         }
 
         // Check if user is already a member
-        boolean isMember = room.getMembers().stream()
-                .anyMatch(member -> member.getUser().getId().equals(memberId) && member.getLeftAt() == null);
+        boolean isMember = activeMembers.stream()
+                .anyMatch(member -> member.getUser().getId().equals(memberId));
 
         if (isMember) {
             throw new AppException("User is already a member of this room");
@@ -279,7 +311,8 @@ public class RoomServiceImpl implements RoomService {
                 .orElseThrow(() -> new AppException("Room not found"));
 
         // Check if admin has permission
-        RoomMember admin = room.getMembers().stream()
+        List<RoomMember> activeMembers = roomMemberRepository.findActiveRoomMembers(roomId);
+        RoomMember admin = activeMembers.stream()
                 .filter(m -> m.getUser().getId().equals(adminId))
                 .findFirst()
                 .orElseThrow(() -> new AppException("You are not a member of this room"));
@@ -288,8 +321,8 @@ public class RoomServiceImpl implements RoomService {
             throw new AppException("You don't have permission to remove members");
         }
 
-        RoomMember memberToRemove = room.getMembers().stream()
-                .filter(m -> m.getUser().getId().equals(memberId) && m.getLeftAt() == null)
+        RoomMember memberToRemove = activeMembers.stream()
+                .filter(m -> m.getUser().getId().equals(memberId))
                 .findFirst()
                 .orElseThrow(() -> new AppException("User is not a member of this room"));
 
@@ -306,20 +339,18 @@ public class RoomServiceImpl implements RoomService {
 
     // Helper methods
     private RoomDTO convertToDTO(Room room, Long currentUserId) {
-        // FIXED: Tạo copy để tránh ConcurrentModificationException
-        Set<RoomMember> membersCopy = new HashSet<>(room.getMembers());
+        // FIX: Sử dụng repository query thay vì truy cập trực tiếp collection
+        List<RoomMember> activeMembers = roomMemberRepository.findActiveRoomMembers(room.getId());
 
-        // Get current user's role in room - SAFE ITERATION
-        String userRole = membersCopy.stream()
-                .filter(member -> member.getUser().getId().equals(currentUserId) && member.getLeftAt() == null)
+        // Get current user's role in room
+        String userRole = activeMembers.stream()
+                .filter(member -> member.getUser().getId().equals(currentUserId))
                 .findFirst()
                 .map(member -> member.getRole().name())
                 .orElse(null);
 
-        // Get active members count - SAFE ITERATION
-        long memberCount = membersCopy.stream()
-                .filter(member -> member.getLeftAt() == null)
-                .count();
+        // Get active members count
+        long memberCount = activeMembers.size();
 
         // Get last message
         ChatMessage lastMessage = messageRepository.findTopByRoomIdOrderByCreatedAtDesc(room.getId())

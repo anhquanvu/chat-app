@@ -6,8 +6,11 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import lombok.EqualsAndHashCode;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.annotations.Fetch;
+import org.hibernate.annotations.FetchMode;
 
 import java.time.LocalDateTime;
 import java.util.HashSet;
@@ -15,10 +18,15 @@ import java.util.Set;
 
 @Entity
 @Table(name = "rooms")
-@Data @NoArgsConstructor @AllArgsConstructor @Builder
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
 public class Room {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @EqualsAndHashCode.Include
     private Long id;
 
     @Column(nullable = false, length = 100)
@@ -52,11 +60,16 @@ public class Room {
 
     private LocalDateTime lastActivityAt;
 
+    // FIX: Sử dụng SUBSELECT để tránh ConcurrentModificationException
     @OneToMany(mappedBy = "room", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    @Fetch(FetchMode.SUBSELECT)
     @Builder.Default
+    @EqualsAndHashCode.Exclude
     private Set<RoomMember> members = new HashSet<>();
 
     @OneToMany(mappedBy = "room", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    @Fetch(FetchMode.SUBSELECT)
     @Builder.Default
+    @EqualsAndHashCode.Exclude
     private Set<Message> messages = new HashSet<>();
 }
