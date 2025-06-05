@@ -2,10 +2,7 @@ package com.revotech.chatapp.model.entity;
 
 import com.revotech.chatapp.model.enums.ConversationType;
 import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
@@ -15,10 +12,16 @@ import java.util.Set;
 
 @Entity
 @Table(name = "conversations")
-@Data @NoArgsConstructor @AllArgsConstructor @Builder
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
 public class Conversation {
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @EqualsAndHashCode.Include
     private Long id;
 
     @Column(length = 100)
@@ -28,7 +31,6 @@ public class Conversation {
     @Column(nullable = false)
     private ConversationType type;
 
-    // FIX: Explicitly map column names
     @Column(name = "participant1_id", nullable = false)
     private Long participant1Id;
 
@@ -49,7 +51,8 @@ public class Conversation {
 
     private LocalDateTime lastMessageAt;
 
-    @OneToMany(mappedBy = "conversation", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    @OneToMany(mappedBy = "conversation", cascade = CascadeType.ALL, fetch = FetchType.LAZY, orphanRemoval = true)
     @Builder.Default
+    @EqualsAndHashCode.Exclude
     private Set<Message> messages = new HashSet<>();
 }

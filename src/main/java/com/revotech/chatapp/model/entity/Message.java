@@ -3,10 +3,7 @@ package com.revotech.chatapp.model.entity;
 import com.revotech.chatapp.model.enums.MessageStatus;
 import com.revotech.chatapp.model.enums.MessageType;
 import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
@@ -16,10 +13,16 @@ import java.util.Set;
 
 @Entity
 @Table(name = "messages")
-@Data @NoArgsConstructor @AllArgsConstructor @Builder
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
 public class Message {
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @EqualsAndHashCode.Include
     private Long id;
 
     @Column(unique = true, nullable = false, length = 36)
@@ -76,9 +79,11 @@ public class Message {
 
     @OneToMany(mappedBy = "message", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     @Builder.Default
+    @EqualsAndHashCode.Exclude
     private Set<MessageReaction> reactions = new HashSet<>();
 
     @OneToMany(mappedBy = "message", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     @Builder.Default
+    @EqualsAndHashCode.Exclude
     private Set<MessageDelivery> deliveries = new HashSet<>();
 }

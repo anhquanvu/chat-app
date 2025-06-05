@@ -376,16 +376,24 @@ function editMessage(messageId, currentContent) {
     }
 }
 
-function updateMessage(message) {
-    const messageElement = document.querySelector(`[data-message-id="${message.id}"]`);
+function updateMessage(messageData) {
+    const messageElement = document.querySelector(`[data-message-id="${messageData.id}"]`);
     if (messageElement) {
         const contentElement = messageElement.querySelector('.message-content');
         if (contentElement) {
-            contentElement.textContent = message.content;
-            // Add edited indicator
-            if (!messageElement.querySelector('.edited-indicator')) {
-                contentElement.insertAdjacentHTML('afterend', '<div class="edited-indicator">(đã chỉnh sửa)</div>');
-            }
+            contentElement.textContent = messageData.content;
+        }
+
+        // Add edited indicator
+        const messageFooter = messageElement.querySelector('.message-footer');
+        if (messageFooter && !messageFooter.querySelector('.edited-indicator')) {
+            const editedIndicator = document.createElement('span');
+            editedIndicator.className = 'edited-indicator';
+            editedIndicator.textContent = '(đã chỉnh sửa)';
+            editedIndicator.style.fontSize = '12px';
+            editedIndicator.style.opacity = '0.7';
+            editedIndicator.style.fontStyle = 'italic';
+            messageFooter.insertBefore(editedIndicator, messageFooter.firstChild);
         }
     }
 }

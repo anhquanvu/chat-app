@@ -26,7 +26,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -332,13 +334,19 @@ public class MessageServiceImpl implements MessageService {
             messageReactionRepository.save(reaction);
         }
 
-        // Broadcast reaction update
+        // Broadcast reaction update với message ID
         List<MessageReactionDTO> reactions = getMessageReactions(request.getMessageId());
 
-        WebSocketResponse<List<MessageReactionDTO>> response = WebSocketResponse.<List<MessageReactionDTO>>builder()
+        // Tạo response data với messageId
+        Map<String, Object> responseData = new HashMap<>();
+        responseData.put("messageId", request.getMessageId());
+        responseData.put("reactions", reactions);
+
+        WebSocketResponse<Map<String, Object>> response = WebSocketResponse.<Map<String, Object>>builder()
                 .type("REACTION")
                 .action("ADD")
-                .data(reactions)
+                .data(responseData)
+                .senderId(userId)
                 .timestamp(LocalDateTime.now())
                 .build();
 
@@ -362,13 +370,19 @@ public class MessageServiceImpl implements MessageService {
         messageReactionRepository.findByMessageAndUser(message, user)
                 .ifPresent(messageReactionRepository::delete);
 
-        // Broadcast reaction update
+        // Broadcast reaction update với message ID
         List<MessageReactionDTO> reactions = getMessageReactions(messageId);
 
-        WebSocketResponse<List<MessageReactionDTO>> response = WebSocketResponse.<List<MessageReactionDTO>>builder()
+        // Tạo response data với messageId
+        Map<String, Object> responseData = new HashMap<>();
+        responseData.put("messageId", messageId);
+        responseData.put("reactions", reactions);
+
+        WebSocketResponse<Map<String, Object>> response = WebSocketResponse.<Map<String, Object>>builder()
                 .type("REACTION")
                 .action("REMOVE")
-                .data(reactions)
+                .data(responseData)
+                .senderId(userId)
                 .timestamp(LocalDateTime.now())
                 .build();
 
@@ -387,6 +401,7 @@ public class MessageServiceImpl implements MessageService {
         Message message = messageRepository.findByMessageId(messageId)
                 .orElseThrow(() -> new AppException("Message not found"));
 
+        // Group reactions by type và include currentUserReacted
         return message.getReactions().stream()
                 .collect(Collectors.groupingBy(MessageReaction::getType))
                 .entrySet().stream()
@@ -395,11 +410,17 @@ public class MessageServiceImpl implements MessageService {
                             .map(reaction -> convertToUserSummary(reaction.getUser()))
                             .collect(Collectors.toList());
 
+                    // Check if current user reacted with this type
+                    // Note: This requires passing current user ID, for now we'll set to false
+                    // TODO: Modify to include current user context
+                    boolean currentUserReacted = false;
+
                     return MessageReactionDTO.builder()
                             .type(entry.getKey())
                             .emoji(entry.getKey().getEmoji())
                             .count((long) entry.getValue().size())
                             .users(users)
+                            .currentUserReacted(currentUserReacted)
                             .lastReactionAt(entry.getValue().stream()
                                     .map(MessageReaction::getCreatedAt)
                                     .max(LocalDateTime::compareTo)
@@ -407,6 +428,11 @@ public class MessageServiceImpl implements MessageService {
                             .build();
                 })
                 .collect(Collectors.toList());
+    }
+
+    private boolean isCurrentUserReacted(List<MessageReaction> reactions, Long currentUserId) {
+        return reactions.stream()
+                .anyMatch(reaction -> reaction.getUser().getId().equals(currentUserId));
     }
 
     @Override

@@ -349,14 +349,13 @@
             margin-left: 10px;
         }
 
-        /* Chat Content - QUAN TRỌNG: Layout cố định hoàn toàn */
+        /* Chat Content - QUAN TRỌNG: Layout cố định */
         .chat-content {
             flex: 1;
             display: flex;
             flex-direction: column;
             min-height: 0; /* Quan trọng */
             overflow: hidden; /* Quan trọng */
-            position: relative; /* Quan trọng để cố định layout */
         }
 
         .chat-content-header {
@@ -394,16 +393,6 @@
             background: #5a6268;
         }
 
-        /* QUAN TRỌNG: Messages area với position cố định */
-        .messages-area {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            min-height: 0;
-            overflow: hidden;
-            position: relative;
-        }
-
         /* QUAN TRỌNG: Container tin nhắn có thể cuộn */
         .messages-container {
             flex: 1; /* Chiếm toàn bộ không gian còn lại */
@@ -413,7 +402,6 @@
             min-height: 0; /* Quan trọng: cho phép co lại */
             display: flex;
             flex-direction: column;
-            position: relative;
         }
 
         .message {
@@ -545,7 +533,6 @@
             background: rgba(255,255,255,0.2);
         }
 
-        /* QUAN TRỌNG: Typing indicator TRONG messages container */
         .typing-indicator {
             padding: 10px 20px;
             font-style: italic;
@@ -557,9 +544,6 @@
             display: none;
             animation: pulse 1.5s infinite;
             flex-shrink: 0;
-            position: sticky; /* Sticky để luôn hiển thị */
-            bottom: 0;
-            z-index: 10;
         }
 
         .typing-indicator.show {
@@ -629,14 +613,13 @@
             color: #495057;
         }
 
-        /* QUAN TRỌNG: Input container cố định tuyệt đối */
+        /* QUAN TRỌNG: Input container cố định */
         .message-input-container {
             padding: 20px;
             background: #f8f9fa;
             border-top: 1px solid #dee2e6;
             flex-shrink: 0; /* KHÔNG co lại */
             position: relative; /* Đảm bảo luôn ở dưới cùng */
-            min-height: 85px; /* Chiều cao tối thiểu cố định */
         }
 
         .input-group {
@@ -656,7 +639,6 @@
             max-height: 120px;
             min-height: 45px;
             line-height: 1.4;
-            font-family: inherit;
         }
 
         .message-input:focus {
@@ -1042,15 +1024,12 @@
                     </div>
                 </div>
 
-                <div class="messages-area">
-                    <div class="messages-container" id="messagesContainer">
-                        <!-- Messages will be loaded here -->
+                <div class="messages-container" id="messagesContainer">
+                    <!-- Messages will be loaded here -->
+                </div>
 
-                        <!-- Typing indicator INSIDE messages container -->
-                        <div class="typing-indicator" id="typingIndicator">
-                            <span id="typingText"></span>
-                        </div>
-                    </div>
+                <div class="typing-indicator" id="typingIndicator">
+                    <span id="typingText"></span>
                 </div>
 
                 <div class="message-input-container">
@@ -1564,7 +1543,12 @@
                 } else if (response.type === 'TYPING') {
                     handleTypingNotification(response.data);
                 } else if (response.type === 'REACTION') {
+                    // Handle reaction updates
                     handleReactionUpdate(response.data);
+                } else if (response.type === 'MESSAGE' && response.action === 'UPDATE') {
+                    updateMessage(response.data);
+                } else if (response.type === 'MESSAGE' && response.action === 'DELETE') {
+                    removeMessage(response.data);
                 } else {
                     // Handle direct message format (backward compatibility)
                     if (response.data && response.data.type === 'CHAT') {
@@ -1603,7 +1587,12 @@
                 } else if (response.type === 'TYPING') {
                     handleTypingNotification(response.data);
                 } else if (response.type === 'REACTION') {
+                    // Handle reaction updates
                     handleReactionUpdate(response.data);
+                } else if (response.type === 'MESSAGE' && response.action === 'UPDATE') {
+                    updateMessage(response.data);
+                } else if (response.type === 'MESSAGE' && response.action === 'DELETE') {
+                    removeMessage(response.data);
                 } else {
                     // Handle direct message format (backward compatibility)
                     if (response.data && response.data.type === 'CHAT') {
@@ -1682,24 +1671,15 @@
 
     function displayMessages(messages) {
         const container = document.getElementById('messagesContainer');
-
-        // Clear existing messages but keep typing indicator
-        const typingIndicator = container.querySelector('.typing-indicator');
         container.innerHTML = '';
-        if (typingIndicator) {
-            container.appendChild(typingIndicator);
-        }
 
         if (messages.length === 0) {
-            const systemMessage = document.createElement('div');
-            systemMessage.className = 'message system';
-            systemMessage.innerHTML = '<div class="message-content">Chưa có tin nhắn nào. Hãy bắt đầu cuộc trò chuyện! 🎉</div>';
-            container.insertBefore(systemMessage, typingIndicator);
+            container.innerHTML = '<div class="message system"><div class="message-content">Chưa có tin nhắn nào. Hãy bắt đầu cuộc trò chuyện! 🎉</div></div>';
             return;
         }
 
         // Reverse to show oldest first
-        messages.reverse().forEach(message => showMessage(message, false));
+        messages.reverse().forEach(message => showMessage(message));
 
         // Auto scroll to bottom
         setTimeout(() => {
@@ -1707,13 +1687,13 @@
         }, 100);
     }
 
-    function showMessage(message, shouldScroll = true) {
+    function showMessage(message) {
         const container = document.getElementById('messagesContainer');
-        const typingIndicator = container.querySelector('.typing-indicator');
 
         // Check if message already exists (avoid duplicates)
         const existingMessage = container.querySelector(`[data-message-id="${message.id}"]`);
         if (existingMessage) {
+            // Update existing message if needed
             return;
         }
 
@@ -1772,18 +1752,14 @@
 
         messageElement.className = messageClass;
         messageElement.dataset.messageId = message.id;
-
-        // Insert before typing indicator
-        container.insertBefore(messageElement, typingIndicator);
+        container.appendChild(messageElement);
 
         // Auto scroll to bottom when new message added
-        if (shouldScroll) {
-            container.scrollTop = container.scrollHeight;
-        }
+        container.scrollTop = container.scrollHeight;
 
         // Mark message as read if not own message
         if (!isOwnMessage && currentChatType && currentChatId) {
-            setTimeout(() => markMessageAsRead(message.id), 1000);
+            setTimeout(() => markMessageAsRead(message.id), 1000); // Delay to simulate reading
         }
     }
 
@@ -1887,7 +1863,6 @@
     function updateTypingIndicator() {
         const indicator = document.getElementById('typingIndicator');
         const textElement = document.getElementById('typingText');
-        const container = document.getElementById('messagesContainer');
 
         if (typingUsers.size > 0) {
             const userList = Array.from(typingUsers);
@@ -1903,11 +1878,6 @@
 
             textElement.textContent = typingText;
             indicator.classList.add('show');
-
-            // Auto scroll to show typing indicator
-            setTimeout(() => {
-                container.scrollTop = container.scrollHeight;
-            }, 50);
         } else {
             indicator.classList.remove('show');
         }
@@ -1943,8 +1913,10 @@
             body: JSON.stringify(request)
         }).then(response => {
             if (response.ok) {
-                // Reaction will be updated via WebSocket
+                console.log('Reaction added successfully');
                 hideReactionPicker();
+            } else {
+                console.error('Failed to add reaction');
             }
         }).catch(error => {
             console.error('Error adding reaction:', error);
@@ -1960,7 +1932,9 @@
             }
         }).then(response => {
             if (response.ok) {
-                // Reaction will be updated via WebSocket
+                console.log('Reaction removed successfully');
+            } else {
+                console.error('Failed to remove reaction');
             }
         }).catch(error => {
             console.error('Error removing reaction:', error);
@@ -1972,13 +1946,73 @@
         currentMessageForReaction = null;
     }
 
-    function handleReactionUpdate(reactions) {
-        // Update reactions in the message
-        console.log('Reaction update:', reactions);
+    function handleReactionUpdate(data) {
+        console.log('Reaction update data:', data);
+
+        let messageId, reactions;
+
+        // Handle different data formats
+        if (data.messageId && data.reactions) {
+            messageId = data.messageId;
+            reactions = data.reactions;
+        } else if (Array.isArray(data)) {
+            // Legacy format - use currentMessageForReaction
+            reactions = data;
+            messageId = currentMessageForReaction;
+        } else {
+            console.error('Invalid reaction update data format:', data);
+            return;
+        }
+
+        if (!messageId) {
+            console.error('No message ID available for reaction update');
+            return;
+        }
+
+        // Find the specific message element
+        const targetMessage = document.querySelector(`[data-message-id="${messageId}"]`);
+        if (!targetMessage) {
+            console.error('Target message not found:', messageId);
+            return;
+        }
+
+        // Find or create reactions container
+        let reactionsContainer = targetMessage.querySelector('.message-reactions');
+        if (!reactionsContainer) {
+            const messageFooter = targetMessage.querySelector('.message-footer');
+            reactionsContainer = document.createElement('div');
+            reactionsContainer.className = 'message-reactions';
+            if (messageFooter) {
+                targetMessage.insertBefore(reactionsContainer, messageFooter);
+            } else {
+                targetMessage.appendChild(reactionsContainer);
+            }
+        }
+
+        // Build reactions HTML
+        let reactionsHTML = '';
+
+        if (reactions && reactions.length > 0) {
+            reactionsHTML = reactions.map(reaction => `
+            <div class="reaction-item ${reaction.currentUserReacted ? 'own-reaction' : ''}"
+                 onclick="toggleReaction('${messageId}', '${reaction.type}')">
+                <span class="reaction-emoji">${reaction.emoji}</span>
+                <span class="reaction-count">${reaction.count}</span>
+            </div>
+        `).join('');
+        }
+
+        // Add reaction button
+        reactionsHTML += `<div class="add-reaction-btn" onclick="showReactionPicker('${messageId}', event)">➕</div>`;
+
+        // Update HTML
+        reactionsContainer.innerHTML = reactionsHTML;
+
+        console.log('Reactions updated for message:', messageId);
     }
 
     // Mark message as read
-    async function markMessageAsRead(messageId) {
+    async function markMessageAsRead(messageIdopenConversation) {
         try {
             await fetch('/api/messages/read', {
                 method: 'POST',
@@ -2408,7 +2442,7 @@
         }
     }, 20 * 60 * 1000);
 
-    console.log('🚀 Final Fixed Chat Application - Input Always Fixed initialized');
+    console.log('🚀 Complete Chat Application with Fixed UI initialized');
 </script>
 </body>
 </html>
