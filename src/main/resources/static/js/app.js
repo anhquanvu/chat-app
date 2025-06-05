@@ -546,34 +546,29 @@
         }
     }
 
-    // FIXED: Message display with proper scrolling
-    function displayMessages(messages) {
-        const wrapper = document.getElementById('messagesWrapper');
-        const typingIndicator = document.getElementById('typingIndicator');
+function displayMessages(messages, appendToTop = false) {
+    const wrapper = document.getElementById('messagesWrapper');
+    const typingIndicator = document.getElementById('typingIndicator');
 
-        // Clear existing messages except typing indicator
+    if (!appendToTop) {
         wrapper.innerHTML = '';
         wrapper.appendChild(typingIndicator);
-
-        if (messages.length === 0) {
-            const systemMessage = document.createElement('div');
-            systemMessage.className = 'message system';
-            systemMessage.innerHTML = '<div class="message-content">Chưa có tin nhắn nào. Hãy bắt đầu cuộc trò chuyện! 🎉</div>';
-            wrapper.insertBefore(systemMessage, typingIndicator);
-        } else {
-            // Reverse to show oldest first
-            messages.reverse().forEach(message => showMessage(message, false));
-        }
-
-        // Force scroll to bottom
-        const container = document.getElementById('messagesContainer');
-        const isAtBottom = container.scrollHeight - container.clientHeight <= container.scrollTop + 100;
-        if (isAtBottom) {
-            scrollToBottom();
-        }
     }
 
-    // FIXED: Message display function
+    const sortedMessages = messages.slice().reverse();
+
+    for (const message of sortedMessages) {
+        showMessage(message, false); // Không cuộn từng message
+    }
+
+    if (!appendToTop) {
+        scrollToBottom();
+    }
+}
+
+
+
+// FIXED: Message display function
     function showMessage(message, shouldScroll = true) {
         const wrapper = document.getElementById('messagesWrapper');
         const typingIndicator = document.getElementById('typingIndicator');
