@@ -24,12 +24,14 @@ public class UserSessionServiceImpl implements UserSessionService {
 
     private final UserRepository userRepository;
 
-    // Lưu trữ dữ liệu session trong bộ nhớ khi không có Redis
+    // In-memory storage when Redis is not available
     private final Map<Long, Set<String>> userSessionsMap = new ConcurrentHashMap<>();
     private final Set<Long> onlineUsers = ConcurrentHashMap.newKeySet();
+    private final Map<String, SessionInfo> sessionInfoMap = new ConcurrentHashMap<>();
 
     private static final String USER_SESSIONS_KEY = "user:sessions:";
     private static final String ONLINE_USERS_KEY = "online:users";
+    private static final String SESSION_INFO_KEY = "session:info:";
     private static final long SESSION_TIMEOUT = 30; // minutes
 
     public UserSessionServiceImpl(UserRepository userRepository) {
@@ -41,26 +43,28 @@ public class UserSessionServiceImpl implements UserSessionService {
     public void markUserOnline(Long userId, String sessionId) {
         if (redisTemplate != null) {
             String userSessionsKey = USER_SESSIONS_KEY + userId;
+            String sessionInfoKey = SESSION_INFO_KEY + sessionId;
 
             // Add session to user's session set
             redisTemplate.opsForSet().add(userSessionsKey, sessionId);
             redisTemplate.expire(userSessionsKey, SESSION_TIMEOUT, TimeUnit.MINUTES);
 
+            // Store session info
+            SessionInfo sessionInfo = new SessionInfo(userId, sessionId, LocalDateTime.now());
+            redisTemplate.opsForValue().set(sessionInfoKey, sessionInfo, SESSION_TIMEOUT, TimeUnit.MINUTES);
+
             // Add user to online users set
             redisTemplate.opsForSet().add(ONLINE_USERS_KEY, userId.toString());
         } else {
-            // Lưu trữ trong bộ nhớ khi không có Redis
+            // In-memory storage
             userSessionsMap.computeIfAbsent(userId, k -> ConcurrentHashMap.newKeySet())
                     .add(sessionId);
             onlineUsers.add(userId);
+            sessionInfoMap.put(sessionId, new SessionInfo(userId, sessionId, LocalDateTime.now()));
         }
 
         // Update user status in database
-        userRepository.findById(userId).ifPresent(user -> {
-            user.setIsOnline(true);
-            user.setLastLogin(LocalDateTime.now());
-            userRepository.save(user);
-        });
+        updateUserOnlineStatus(userId, true);
 
         log.debug("User {} marked as online with session {}", userId, sessionId);
     }
@@ -69,9 +73,11 @@ public class UserSessionServiceImpl implements UserSessionService {
     public void markUserOffline(Long userId, String sessionId) {
         if (redisTemplate != null) {
             String userSessionsKey = USER_SESSIONS_KEY + userId;
+            String sessionInfoKey = SESSION_INFO_KEY + sessionId;
 
             // Remove session from user's session set
             redisTemplate.opsForSet().remove(userSessionsKey, sessionId);
+            redisTemplate.delete(sessionInfoKey);
 
             // Check if user has any other active sessions
             Set<Object> remainingSessions = redisTemplate.opsForSet().members(userSessionsKey);
@@ -79,17 +85,18 @@ public class UserSessionServiceImpl implements UserSessionService {
             if (remainingSessions == null || remainingSessions.isEmpty()) {
                 // No more active sessions, mark user as offline
                 redisTemplate.opsForSet().remove(ONLINE_USERS_KEY, userId.toString());
-                updateUserOfflineStatus(userId);
+                updateUserOnlineStatus(userId, false);
             }
         } else {
-            // Xử lý trong bộ nhớ
+            // In-memory processing
             Set<String> sessions = userSessionsMap.get(userId);
             if (sessions != null) {
                 sessions.remove(sessionId);
+                sessionInfoMap.remove(sessionId);
 
                 if (sessions.isEmpty()) {
                     onlineUsers.remove(userId);
-                    updateUserOfflineStatus(userId);
+                    updateUserOnlineStatus(userId, false);
                 }
             }
         }
@@ -97,13 +104,80 @@ public class UserSessionServiceImpl implements UserSessionService {
         log.debug("User {} session {} marked as offline", userId, sessionId);
     }
 
-    private void updateUserOfflineStatus(Long userId) {
-        // Update user status in database
-        userRepository.findById(userId).ifPresent(user -> {
-            user.setIsOnline(false);
-            user.setLastSeen(LocalDateTime.now());
-            userRepository.save(user);
-        });
+    /**
+     * NEW: Update heartbeat timestamp for a session
+     */
+    public void updateHeartbeat(Long userId, String sessionId) {
+        if (redisTemplate != null) {
+            String sessionInfoKey = SESSION_INFO_KEY + sessionId;
+            String userSessionsKey = USER_SESSIONS_KEY + userId;
+
+            // Update session info with new heartbeat
+            SessionInfo sessionInfo = (SessionInfo) redisTemplate.opsForValue().get(sessionInfoKey);
+            if (sessionInfo != null) {
+                sessionInfo.setLastHeartbeat(LocalDateTime.now());
+                redisTemplate.opsForValue().set(sessionInfoKey, sessionInfo, SESSION_TIMEOUT, TimeUnit.MINUTES);
+
+                // Extend session timeout
+                redisTemplate.expire(userSessionsKey, SESSION_TIMEOUT, TimeUnit.MINUTES);
+            } else {
+                // Session info doesn't exist, create new one
+                sessionInfo = new SessionInfo(userId, sessionId, LocalDateTime.now());
+                redisTemplate.opsForValue().set(sessionInfoKey, sessionInfo, SESSION_TIMEOUT, TimeUnit.MINUTES);
+            }
+        } else {
+            // In-memory processing
+            SessionInfo sessionInfo = sessionInfoMap.get(sessionId);
+            if (sessionInfo != null) {
+                sessionInfo.setLastHeartbeat(LocalDateTime.now());
+            } else {
+                sessionInfoMap.put(sessionId, new SessionInfo(userId, sessionId, LocalDateTime.now()));
+            }
+        }
+
+        log.debug("Heartbeat updated for user {} session {}", userId, sessionId);
+    }
+
+    /**
+     * NEW: Get session info
+     */
+    public SessionInfo getSessionInfo(String sessionId) {
+        if (redisTemplate != null) {
+            String sessionInfoKey = SESSION_INFO_KEY + sessionId;
+            return (SessionInfo) redisTemplate.opsForValue().get(sessionInfoKey);
+        } else {
+            return sessionInfoMap.get(sessionId);
+        }
+    }
+
+    /**
+     * NEW: Check if session is active based on heartbeat
+     */
+    public boolean isSessionActive(String sessionId, long timeoutMinutes) {
+        SessionInfo sessionInfo = getSessionInfo(sessionId);
+        if (sessionInfo == null) {
+            return false;
+        }
+
+        LocalDateTime cutoffTime = LocalDateTime.now().minusMinutes(timeoutMinutes);
+        return sessionInfo.getLastHeartbeat().isAfter(cutoffTime);
+    }
+
+    /**
+     * NEW: Get all sessions for a user with their heartbeat info
+     */
+    public Map<String, SessionInfo> getUserSessionsWithInfo(Long userId) {
+        Set<String> sessionIds = getUserSessions(userId);
+        Map<String, SessionInfo> sessionInfos = new ConcurrentHashMap<>();
+
+        for (String sessionId : sessionIds) {
+            SessionInfo sessionInfo = getSessionInfo(sessionId);
+            if (sessionInfo != null) {
+                sessionInfos.put(sessionId, sessionInfo);
+            }
+        }
+
+        return sessionInfos;
     }
 
     @Override
@@ -143,22 +217,35 @@ public class UserSessionServiceImpl implements UserSessionService {
     public void removeAllUserSessions(Long userId) {
         if (redisTemplate != null) {
             String userSessionsKey = USER_SESSIONS_KEY + userId;
+
+            // Get all sessions for cleanup
+            Set<Object> sessions = redisTemplate.opsForSet().members(userSessionsKey);
+            if (sessions != null) {
+                for (Object sessionObj : sessions) {
+                    String sessionId = sessionObj.toString();
+                    String sessionInfoKey = SESSION_INFO_KEY + sessionId;
+                    redisTemplate.delete(sessionInfoKey);
+                }
+            }
+
             // Remove all sessions
             redisTemplate.delete(userSessionsKey);
             // Remove from online users
             redisTemplate.opsForSet().remove(ONLINE_USERS_KEY, userId.toString());
         } else {
-            // Xử lý trong bộ nhớ
+            // In-memory processing
+            Set<String> sessions = userSessionsMap.get(userId);
+            if (sessions != null) {
+                for (String sessionId : sessions) {
+                    sessionInfoMap.remove(sessionId);
+                }
+            }
             userSessionsMap.remove(userId);
             onlineUsers.remove(userId);
         }
 
         // Update user status in database
-        userRepository.findById(userId).ifPresent(user -> {
-            user.setIsOnline(false);
-            user.setLastSeen(LocalDateTime.now());
-            userRepository.save(user);
-        });
+        updateUserOnlineStatus(userId, false);
 
         log.info("All sessions removed for user {}", userId);
     }
@@ -188,5 +275,53 @@ public class UserSessionServiceImpl implements UserSessionService {
         } else {
             return Set.copyOf(onlineUsers);
         }
+    }
+
+    private void updateUserOnlineStatus(Long userId, boolean isOnline) {
+        try {
+            userRepository.findById(userId).ifPresent(user -> {
+                user.setIsOnline(isOnline);
+                if (isOnline) {
+                    user.setLastLogin(LocalDateTime.now());
+                } else {
+                    user.setLastSeen(LocalDateTime.now());
+                }
+                userRepository.save(user);
+            });
+        } catch (Exception e) {
+            log.error("Error updating user online status for user {}", userId, e);
+        }
+    }
+
+    /**
+     * Session information class
+     */
+    public static class SessionInfo {
+        private Long userId;
+        private String sessionId;
+        private LocalDateTime createdAt;
+        private LocalDateTime lastHeartbeat;
+
+        public SessionInfo() {}
+
+        public SessionInfo(Long userId, String sessionId, LocalDateTime createdAt) {
+            this.userId = userId;
+            this.sessionId = sessionId;
+            this.createdAt = createdAt;
+            this.lastHeartbeat = createdAt;
+        }
+
+        // Getters and setters
+        public Long getUserId() { return userId; }
+        public void setUserId(Long userId) { this.userId = userId; }
+
+        public String getSessionId() { return sessionId; }
+        public void setSessionId(String sessionId) { this.sessionId = sessionId; }
+
+        public LocalDateTime getCreatedAt() { return createdAt; }
+        public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+
+        public LocalDateTime getLastHeartbeat() { return lastHeartbeat; }
+        public void setLastHeartbeat(LocalDateTime lastHeartbeat) { this.lastHeartbeat = lastHeartbeat; }
     }
 }

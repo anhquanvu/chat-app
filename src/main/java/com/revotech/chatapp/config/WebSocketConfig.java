@@ -1,6 +1,7 @@
 package com.revotech.chatapp.config;
 
 import com.revotech.chatapp.security.JwtTokenUtil;
+import com.revotech.chatapp.security.UserPrincipal;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -87,10 +88,10 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                     Map<String, Object> sessionAttributes = accessor.getSessionAttributes();
                     if (sessionAttributes != null) {
                         sessionAttributes.put("username", username);
-                        sessionAttributes.put("userId", ((com.revotech.chatapp.security.UserPrincipal) userDetails).getId());
+                        sessionAttributes.put("userId", ((UserPrincipal) userDetails).getId());
 
                         log.info("WebSocket authenticated user: {} with ID: {} for session: {}",
-                                username, ((com.revotech.chatapp.security.UserPrincipal) userDetails).getId(), sessionId);
+                                username, ((UserPrincipal) userDetails).getId(), sessionId);
                     } else {
                         log.warn("Session attributes is null during authentication for user: {} session: {}", username, sessionId);
                     }
