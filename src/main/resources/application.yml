@@ -10,7 +10,17 @@ server:
 spring:
   application:
     name: chat-app
-  
+  # Task Configuration
+  task:
+    execution:
+      pool:
+        core-size: 4
+        max-size: 16
+        queue-capacity: 500
+      thread-name-prefix: "spring-async-"
+      shutdown:
+        await-termination: true
+        await-termination-period: 30s
   # Database Configuration
   datasource:
     url: jdbc:mysql://localhost:3306/chatapp?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true

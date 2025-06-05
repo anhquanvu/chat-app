@@ -20,6 +20,8 @@ import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBr
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
 
+import java.util.Map;
+
 @Configuration
 @EnableWebSocketMessageBroker
 @RequiredArgsConstructor
@@ -54,36 +56,57 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                 StompHeaderAccessor accessor = MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
 
                 if (StompCommand.CONNECT.equals(accessor.getCommand())) {
-                    String authToken = accessor.getFirstNativeHeader("Authorization");
-
-                    if (authToken != null && authToken.startsWith("Bearer ")) {
-                        String token = authToken.substring(7);
-
-                        if (jwtTokenUtil.validateToken(token)) {
-                            String username = jwtTokenUtil.getUsernameFromToken(token);
-
-                            try {
-                                var userDetails = userDetailsService.loadUserByUsername(username);
-                                var auth = new UsernamePasswordAuthenticationToken(
-                                        userDetails, null, userDetails.getAuthorities());
-
-                                SecurityContextHolder.getContext().setAuthentication(auth);
-                                accessor.setUser(auth);
-
-                                // Store user info in session attributes
-                                accessor.getSessionAttributes().put("username", username);
-                                accessor.getSessionAttributes().put("userId", ((com.revotech.chatapp.security.UserPrincipal) userDetails).getId());
-
-                                log.info("WebSocket authenticated user: {}", username);
-                            } catch (Exception e) {
-                                log.error("Error authenticating WebSocket user: {}", e.getMessage());
-                            }
-                        }
-                    }
+                    return handleConnectionAuthentication(accessor, message);
                 }
 
                 return message;
             }
         });
+    }
+
+    private Message<?> handleConnectionAuthentication(StompHeaderAccessor accessor, Message<?> message) {
+        String sessionId = accessor.getSessionId();
+
+        try {
+            String authToken = accessor.getFirstNativeHeader("Authorization");
+
+            if (authToken != null && authToken.startsWith("Bearer ")) {
+                String token = authToken.substring(7);
+
+                if (jwtTokenUtil.validateToken(token)) {
+                    String username = jwtTokenUtil.getUsernameFromToken(token);
+
+                    var userDetails = userDetailsService.loadUserByUsername(username);
+                    var auth = new UsernamePasswordAuthenticationToken(
+                            userDetails, null, userDetails.getAuthorities());
+
+                    SecurityContextHolder.getContext().setAuthentication(auth);
+                    accessor.setUser(auth);
+
+                    // Ensure session attributes are properly set
+                    Map<String, Object> sessionAttributes = accessor.getSessionAttributes();
+                    if (sessionAttributes != null) {
+                        sessionAttributes.put("username", username);
+                        sessionAttributes.put("userId", ((com.revotech.chatapp.security.UserPrincipal) userDetails).getId());
+
+                        log.info("WebSocket authenticated user: {} with ID: {} for session: {}",
+                                username, ((com.revotech.chatapp.security.UserPrincipal) userDetails).getId(), sessionId);
+                    } else {
+                        log.warn("Session attributes is null during authentication for user: {} session: {}", username, sessionId);
+                    }
+                } else {
+                    log.warn("Invalid JWT token received for session: {}", sessionId);
+                    throw new org.springframework.security.authentication.AuthenticationCredentialsNotFoundException("Invalid JWT token");
+                }
+            } else {
+                log.warn("No Authorization header found for session: {}", sessionId);
+                throw new org.springframework.security.authentication.AuthenticationCredentialsNotFoundException("Missing authorization header");
+            }
+        } catch (Exception e) {
+            log.error("WebSocket authentication failed for session {}: {}", sessionId, e.getMessage());
+            throw new org.springframework.security.authentication.AuthenticationCredentialsNotFoundException("Authentication failed: " + e.getMessage());
+        }
+
+        return message;
     }
 }
