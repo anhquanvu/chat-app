@@ -11,5 +11,4 @@ public interface UserSessionService {
     void removeAllUserSessions(Long userId);
     Long getOnlineUserCount();
     Set<Long> getOnlineUserIds();
-    void updateHeartbeat(Long userId, String sessionId);
 }

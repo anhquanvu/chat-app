@@ -37,7 +37,8 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Override
     public void configureMessageBroker(MessageBrokerRegistry config) {
-        config.enableSimpleBroker("/topic", "/user");
+        config.enableSimpleBroker("/topic", "/user")
+                .setHeartbeatValue(new long[]{25000, 25000}); // 25 giây heartbeat
         config.setApplicationDestinationPrefixes("/app");
         config.setUserDestinationPrefix("/user");
     }
@@ -46,7 +47,8 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         registry.addEndpoint("/ws")
                 .setAllowedOrigins(allowedOrigins)
-                .withSockJS();
+                .withSockJS()
+                .setHeartbeatTime(25000); // 25 giây heartbeat cho SockJS
     }
 
     @Override
@@ -84,7 +86,6 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                     SecurityContextHolder.getContext().setAuthentication(auth);
                     accessor.setUser(auth);
 
-                    // Ensure session attributes are properly set
                     Map<String, Object> sessionAttributes = accessor.getSessionAttributes();
                     if (sessionAttributes != null) {
                         sessionAttributes.put("username", username);

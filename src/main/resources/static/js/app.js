@@ -170,75 +170,145 @@
         loadInitialData();
     }
 
-    function logout() {
-        if (authToken) {
-            fetch('/api/auth/logout', {
-                method: 'POST',
-                headers: {
-                    'Authorization': 'Bearer ' + authToken
-                }
-            }).catch(error => console.error('Logout error:', error));
-        }
-
-        if (stompClient) {
-            stompClient.disconnect();
-            stompClient = null;
-        }
-
-        localStorage.removeItem('authToken');
-        localStorage.removeItem('refreshToken');
-        localStorage.removeItem('currentUser');
-
-        authToken = null;
-        refreshToken = null;
-        currentUser = null;
-        currentChatType = null;
-        currentChatId = null;
-
-        document.getElementById('authModal').classList.remove('hidden');
-        document.getElementById('chatContainer').classList.add('hidden');
-
-        document.getElementById('loginForm').reset();
-        document.getElementById('registerForm').reset();
-        document.getElementById('loginError').textContent = '';
-        document.getElementById('registerError').textContent = '';
+function logout() {
+    if (stompClient && connected) {
+        stompClient.disconnect(function() {
+            console.log('STOMP disconnected on logout');
+        });
+        stompClient = null;
+        connected = false;
     }
 
+    // Rest of logout logic...
+    if (authToken) {
+        fetch('/api/auth/logout', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + authToken
+            }
+        }).catch(error => console.error('Logout error:', error));
+    }
+
+    localStorage.removeItem('authToken');
+    localStorage.removeItem('refreshToken');
+    localStorage.removeItem('currentUser');
+
+    authToken = null;
+    refreshToken = null;
+    currentUser = null;
+    currentChatType = null;
+    currentChatId = null;
+
+    document.getElementById('authModal').classList.remove('hidden');
+    document.getElementById('chatContainer').classList.add('hidden');
+
+    document.getElementById('loginForm').reset();
+    document.getElementById('registerForm').reset();
+    document.getElementById('loginError').textContent = '';
+    document.getElementById('registerError').textContent = '';
+}
+
     // WebSocket connection
-    function connectWebSocket() {
-        if (!authToken || !currentUser) {
-            console.error('No auth token or user data');
-            return;
-        }
+function connectWebSocket() {
+    if (!authToken || !currentUser) {
+        console.error('No auth token or user data');
+        return;
+    }
 
-        const socket = new SockJS('/ws');
-        stompClient = Stomp.over(socket);
-        stompClient.debug = null;
+    const socket = new SockJS('/ws');
+    stompClient = Stomp.over(socket);
 
-        const connectHeaders = {
-            'Authorization': 'Bearer ' + authToken
-        };
+    // Tắt debug log trong production
+    stompClient.debug = function(str) {
+        // console.log('STOMP: ' + str);
+    };
 
-        stompClient.connect(connectHeaders, function (frame) {
+    // Cấu hình heartbeat cho STOMP client
+    stompClient.heartbeat.outgoing = 25000; // Client gửi heartbeat mỗi 25 giây
+    stompClient.heartbeat.incoming = 25000; // Expect server heartbeat mỗi 25 giây
+
+    const connectHeaders = {
+        'Authorization': 'Bearer ' + authToken,
+        // STOMP sẽ tự động negotiate heartbeat với server
+    };
+
+    stompClient.connect(connectHeaders,
+        function onConnect(frame) {
             console.log('Connected to WebSocket:', frame);
             connected = true;
 
+            // Subscribe to user status updates
             stompClient.subscribe('/topic/user-status', function (message) {
                 const userStatus = JSON.parse(message.body);
                 updateUserStatus(userStatus);
             });
 
-        }, function(error) {
+            // Subscribe to personal notifications
+            stompClient.subscribe('/user/queue/message-status', function (message) {
+                console.log('Personal notification:', message.body);
+            });
+
+            console.log('STOMP heartbeat configured: outgoing=' +
+                stompClient.heartbeat.outgoing + 'ms, incoming=' +
+                stompClient.heartbeat.incoming + 'ms');
+
+        },
+        function onError(error) {
             console.error('WebSocket connection error:', error);
             connected = false;
 
-            if (error.includes('401') || error.includes('403')) {
+            // STOMP sẽ tự động phát hiện connection loss thông qua heartbeat
+            // Không cần manual detection
+
+            if (error.toString().includes('401') || error.toString().includes('403')) {
+                console.log('Authentication error, attempting token refresh...');
                 refreshAuthToken();
+            } else {
+                // Tự động reconnect sau 5 giây
+                setTimeout(() => {
+                    if (!connected && authToken) {
+                        console.log('Attempting WebSocket reconnection...');
+                        connectWebSocket();
+                    }
+                }, 5000);
             }
+        }
+    );
+
+    // STOMP sẽ tự động handle connection loss và cleanup
+    socket.onclose = function() {
+        console.log('WebSocket connection closed');
+        connected = false;
+    };
+}
+
+function monitorConnection() {
+    setInterval(() => {
+        if (stompClient && connected) {
+            // Kiểm tra connection status thông qua STOMP
+            if (!stompClient.connected) {
+                console.warn('STOMP connection lost, attempting reconnect...');
+                connected = false;
+                connectWebSocket();
+            }
+        }
+    }, 30000); // Kiểm tra mỗi 30 giây
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    initializeApp();
+    monitorConnection();
+});
+
+window.addEventListener('beforeunload', function() {
+    if (stompClient && connected) {
+        stompClient.disconnect(function() {
+            console.log('STOMP disconnected gracefully');
         });
     }
+});
 
-    async function refreshAuthToken() {
+async function refreshAuthToken() {
         if (!refreshToken) {
             logout();
             return;
@@ -411,36 +481,28 @@
         document.getElementById('activeChatContent').classList.remove('hidden');
         document.getElementById('chatTitle').textContent = title;
 
-        if (stompClient && connected) {
-            stompClient.subscribe(`/topic/conversation/${conversationId}`, function (message) {
-                try {
-                    const response = JSON.parse(message.body);
-                    console.log('Conversation message received:', response);
+        stompClient.subscribe(`/topic/conversation/${conversationId}`, function (message) {
+            try {
+                const response = JSON.parse(message.body);
+                console.log('Conversation message received:', response);
 
-                    if (response.type === 'MESSAGE' && response.action === 'SEND') {
-                        showMessage(response.data);
-                    } else if (response.type === 'TYPING') {
-                        handleTypingNotification(response);
-                    } else if (response.type === 'REACTION') {
-                        handleReactionUpdate(response.data);
-                    } else if (response.type === 'MESSAGE' && response.action === 'UPDATE') {
-                        updateMessage(response.data);
-                    } else if (response.type === 'MESSAGE' && response.action === 'DELETE') {
-                        removeMessage(response.data);
-                    } else {
-                        if (response.data && response.data.type === 'CHAT') {
-                            showMessage(response.data);
-                        } else if (response.data && response.data.isTyping !== undefined) {
-                            handleTypingNotification(response.data);
-                        } else if (response.isTyping !== undefined) {
-                            handleTypingNotification(response);
-                        }
-                    }
-                } catch (error) {
-                    console.error('Error processing WebSocket message:', error, message.body);
+                if (response.type === 'MESSAGE' && response.action === 'SEND') {
+                    showMessage(response.data);
+                } else if (response.type === 'TYPING') {
+                    handleTypingNotification(response);
+                } else if (response.type === 'REACTION') {
+                    handleReactionUpdate(response.data);
+                } else if (response.type === 'MESSAGE' && response.action === 'UPDATE') {
+                    updateMessage(response.data);
+                } else if (response.type === 'MESSAGE' && response.action === 'DELETE') {
+                    removeMessage(response.data);
+                } else if (response.type === 'MESSAGE_STATUS') {
+                    handleMessageStatusUpdate(response.data);
                 }
-            });
-        }
+            } catch (error) {
+                console.error('Error processing WebSocket message:', error, message.body);
+            }
+        });
 
         loadConversationMessages(conversationId);
     }
@@ -456,39 +518,50 @@
         document.getElementById('activeChatContent').classList.remove('hidden');
         document.getElementById('chatTitle').textContent = title;
 
-        if (stompClient && connected) {
-            stompClient.subscribe(`/topic/room/${roomId}`, function (message) {
-                try {
-                    const response = JSON.parse(message.body);
-                    console.log('Room message received:', response);
+        stompClient.subscribe(`/topic/room/${roomId}`, function (message) {
+            try {
+                const response = JSON.parse(message.body);
+                console.log('Room message received:', response);
 
-                    if (response.type === 'MESSAGE' && response.action === 'SEND') {
-                        showMessage(response.data);
-                    } else if (response.type === 'TYPING') {
-                        handleTypingNotification(response);
-                    } else if (response.type === 'REACTION') {
-                        handleReactionUpdate(response.data);
-                    } else if (response.type === 'MESSAGE' && response.action === 'UPDATE') {
-                        updateMessage(response.data);
-                    } else if (response.type === 'MESSAGE' && response.action === 'DELETE') {
-                        removeMessage(response.data);
-                    } else {
-                        if (response.data && response.data.type === 'CHAT') {
-                            showMessage(response.data);
-                        } else if (response.data && response.data.isTyping !== undefined) {
-                            handleTypingNotification(response.data);
-                        } else if (response.isTyping !== undefined) {
-                            handleTypingNotification(response);
-                        }
-                    }
-                } catch (error) {
-                    console.error('Error processing WebSocket message:', error, message.body);
+                if (response.type === 'MESSAGE' && response.action === 'SEND') {
+                    showMessage(response.data);
+                } else if (response.type === 'TYPING') {
+                    handleTypingNotification(response);
+                } else if (response.type === 'REACTION') {
+                    handleReactionUpdate(response.data);
+                } else if (response.type === 'MESSAGE' && response.action === 'UPDATE') {
+                    updateMessage(response.data);
+                } else if (response.type === 'MESSAGE' && response.action === 'DELETE') {
+                    removeMessage(response.data);
+                } else if (response.type === 'MESSAGE_STATUS') {
+                    handleMessageStatusUpdate(response.data);
                 }
-            });
-        }
+            } catch (error) {
+                console.error('Error processing WebSocket message:', error, message.body);
+            }
+        });
 
         loadRoomMessages(roomId);
     }
+
+function handleMessageStatusUpdate(data) {
+    if (data && data.messageId && data.status) {
+        const messageElement = document.querySelector(`[data-message-id="${data.messageId}"]`);
+        if (messageElement) {
+            const statusIcon = messageElement.querySelector('.status-icon');
+            const statusText = messageElement.querySelector('.status-text');
+
+            if (statusIcon) {
+                statusIcon.textContent = getStatusIcon(data.status);
+                statusIcon.className = `status-icon ${data.status.toLowerCase()}`;
+            }
+
+            if (statusText) {
+                statusText.textContent = getStatusText(data.status);
+            }
+        }
+    }
+}
 
     async function startDirectChat(userId, userName) {
         try {
@@ -751,83 +824,128 @@ function displayMessages(messages, appendToTop = false) {
         isCurrentlyTyping = false;
     }
 
-    function handleTypingNotification(response) {
-        console.log('Processing typing notification:', response);
+function handleTypingNotification(response) {
+    console.log('Processing typing notification:', response);
+    console.log('Response data:', response.data);
 
-        try {
-            let data, userId, username, isTyping;
+    try {
+        let userId, username, isTyping;
 
-            if (response.data) {
-                data = response.data;
-                userId = data.userId;
-                username = data.username;
+        // Xử lý cấu trúc WebSocketResponse từ backend
+        if (response.type === 'TYPING' && response.data) {
+            // Cấu trúc: WebSocketResponse<TypingIndicator>
+            const data = response.data;
+            userId = data.userId;
+            username = data.username || data.fullName;
+
+            // Xác định isTyping từ action hoặc data.isTyping
+            if (response.action === 'START') {
+                isTyping = true;
+            } else if (response.action === 'STOP') {
+                isTyping = false;
+            } else {
                 isTyping = data.isTyping;
-            } else if (response.userId) {
-                userId = response.userId;
-                username = response.username;
-                isTyping = response.isTyping;
-            } else {
-                console.warn('Unknown typing notification structure:', response);
-                return;
             }
-
-            if (userId === undefined || username === undefined || isTyping === undefined) {
-                console.warn('Missing required fields in typing notification:', {userId, username, isTyping});
-                return;
-            }
-
-            if (userId === currentUser.id) {
-                return;
-            }
-
-            if (isTyping) {
-                typingUsers.add(username);
-            } else {
-                typingUsers.delete(username);
-            }
-
-            updateTypingIndicator();
-
-        } catch (error) {
-            console.error('Error processing typing notification:', error, response);
+        } else if (response.data && response.data.userId !== undefined) {
+            // Fallback: data object trực tiếp
+            const data = response.data;
+            userId = data.userId;
+            username = data.username || data.fullName;
+            isTyping = data.isTyping;
+        } else if (response.userId !== undefined) {
+            // Fallback: response trực tiếp (backward compatibility)
+            userId = response.userId;
+            username = response.username || response.senderUsername;
+            isTyping = response.isTyping;
+        } else {
+            console.warn('Unknown typing notification structure:', response);
+            return;
         }
+
+        console.log('Extracted values:', {userId, username, isTyping, currentUserId: currentUser.id});
+
+        // Validate required fields
+        if (userId === undefined || username === undefined || isTyping === undefined) {
+            console.warn('Missing required fields in typing notification:', {userId, username, isTyping});
+            return;
+        }
+
+        // Ignore own typing notifications
+        if (userId === currentUser.id) {
+            console.log('Ignoring own typing notification');
+            return;
+        }
+
+        // Update typing users set
+        if (isTyping) {
+            console.log('Adding user to typing list:', username);
+            typingUsers.add(username);
+        } else {
+            console.log('Removing user from typing list:', username);
+            typingUsers.delete(username);
+        }
+
+        console.log('Current typing users:', Array.from(typingUsers));
+
+        // Update UI
+        updateTypingIndicator();
+
+        console.log('Typing notification processed:', {
+            username,
+            isTyping,
+            totalTypingUsers: typingUsers.size
+        });
+
+    } catch (error) {
+        console.error('Error processing typing notification:', error, response);
     }
+}
 
-    function updateTypingIndicator() {
-        try {
-            const indicator = document.getElementById('typingIndicator');
-            const textElement = document.getElementById('typingText');
+function updateTypingIndicator() {
+    try {
+        const indicator = document.getElementById('typingIndicator');
+        const textElement = document.getElementById('typingText');
 
-            if (!indicator || !textElement) {
-                return;
+        if (!indicator || !textElement) {
+            console.warn('Typing indicator elements not found');
+            return;
+        }
+
+        if (typingUsers.size > 0) {
+            const userList = Array.from(typingUsers);
+            let typingText = '';
+
+            if (userList.length === 1) {
+                typingText = `${userList[0]} đang nhập`;
+            } else if (userList.length === 2) {
+                typingText = `${userList[0]} và ${userList[1]} đang nhập`;
+            } else {
+                typingText = `${userList.length} người đang nhập`;
             }
 
-            if (typingUsers.size > 0) {
-                const userList = Array.from(typingUsers);
-                let typingText = '';
+            textElement.textContent = typingText;
+            indicator.classList.add('show');
 
-                if (userList.length === 1) {
-                    typingText = `${userList[0]} đang nhập...`;
-                } else if (userList.length === 2) {
-                    typingText = `${userList[0]} và ${userList[1]} đang nhập...`;
-                } else {
-                    typingText = `${userList.length} người đang nhập...`;
+            // Auto scroll when showing typing indicator
+            setTimeout(() => {
+                const container = document.getElementById('messagesContainer');
+                if (container) {
+                    const isAtBottom = container.scrollHeight - container.clientHeight <= container.scrollTop + 100;
+                    if (isAtBottom) {
+                        container.scrollTop = container.scrollHeight;
+                    }
                 }
-
-                textElement.textContent = typingText;
-                indicator.classList.add('show');
-
-                // Auto scroll when showing typing indicator
-                setTimeout(() => scrollToBottom(), 100);
-            } else {
-                indicator.classList.remove('show');
-            }
-        } catch (error) {
-            console.error('Error updating typing indicator:', error);
+            }, 100);
+        } else {
+            indicator.classList.remove('show');
         }
+    } catch (error) {
+        console.error('Error updating typing indicator:', error);
     }
+}
 
-    // Message reactions
+
+// Message reactions
     function showReactionPicker(messageId, event) {
         event.stopPropagation();
 
