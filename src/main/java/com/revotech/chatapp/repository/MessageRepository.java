@@ -92,6 +92,12 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
     @Query("SELECT COUNT(m) FROM Message m WHERE m.room.id = :roomId AND m.isDeleted = false")
     Long countByRoomIdAndIsDeletedFalse(@Param("roomId") Long roomId);
 
+    @Query("SELECT COUNT(m) FROM Message m WHERE m.room.id = :roomId AND m.createdAt > :timestamp AND m.sender.id != :userId AND m.isDeleted = false")
+    Long countMessagesAfterTimestamp(@Param("roomId") Long roomId, @Param("timestamp") LocalDateTime timestamp, @Param("userId") Long userId);
+
+    @Query("SELECT COUNT(m) FROM Message m WHERE m.conversation.id = :conversationId AND m.sender.id != :userId AND m.status != 'read' AND m.isDeleted = false")
+    Long countUnreadMessagesInConversation(@Param("conversationId") Long conversationId, @Param("userId") Long userId);
+
     // Pinned messages queries
     @Query("SELECT m FROM Message m WHERE m.room.id = :roomId AND m.isPinned = true AND m.isDeleted = false ORDER BY m.pinnedAt DESC")
     List<Message> findPinnedMessagesByRoomId(@Param("roomId") Long roomId);

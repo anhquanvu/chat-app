@@ -1,6 +1,7 @@
 package com.revotech.chatapp.controller;
 
 import com.revotech.chatapp.model.dto.ChatMessage;
+import com.revotech.chatapp.model.dto.request.MessageVisibilityRequest;
 import com.revotech.chatapp.model.dto.request.SendMessageRequest;
 import com.revotech.chatapp.service.ConversationService;
 import com.revotech.chatapp.service.MessageService;
@@ -89,6 +90,18 @@ public class ChatController {
         messageService.trackUserLeaveChat(null, conversationId, userId, sessionId);
 
         log.debug("User {} left conversation {} with session {}", userId, conversationId, sessionId);
+    }
+
+    @MessageMapping("/message/visibility")
+    public void handleMessageVisibility(@Payload MessageVisibilityRequest request,
+                                        SimpMessageHeaderAccessor headerAccessor) {
+        Long userId = (Long) headerAccessor.getSessionAttributes().get("userId");
+        String sessionId = headerAccessor.getSessionId();
+
+        messageService.trackMessageVisibility(request.getMessageId(), userId, sessionId, request.isVisible());
+
+        log.debug("Message visibility updated: {} - visible: {} by user: {}",
+                request.getMessageId(), request.isVisible(), userId);
     }
 
     @MessageMapping("/chat/typing/room/{roomId}")

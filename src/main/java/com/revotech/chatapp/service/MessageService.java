@@ -9,7 +9,6 @@ import org.springframework.data.domain.Page;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 public interface MessageService {
     // Room messages
@@ -28,14 +27,15 @@ public interface MessageService {
 
     // Message status and reactions
     void markMessageAsRead(MarkMessageReadRequest request, Long userId);
+    void trackMessageVisibility(String messageId, Long userId, String sessionId, boolean visible);
+    void cleanupUserSessionFromAllChats(Long userId, String sessionId);
     void addReaction(AddReactionRequest request, Long userId);
     void removeReaction(String messageId, Long userId);
     List<MessageReactionDTO> getMessageReactions(String messageId);
 
-    // NEW: Auto message status updates
+    // Simplified message status tracking
     void autoMarkMessagesAsRead(Long roomId, Long conversationId, Long userId);
-    void updateMessageDeliveryStatus(String messageId, Long userId);
-    void autoMarkMessagesAsDelivered(Long roomId, Long conversationId, Long userId);
+    Long getUnreadMessagesCount(Long roomId, Long conversationId, Long userId);
 
     // Real-time features
     void broadcastMessage(ChatMessage message);
@@ -46,14 +46,11 @@ public interface MessageService {
     Page<ChatMessage> searchMessagesInRoom(Long roomId, String keyword, Long userId, int page, int size);
     Page<ChatMessage> searchMessagesInConversation(Long conversationId, String keyword, Long userId, int page, int size);
 
-    //auto-read tracking methods
+    // Active user tracking (simplified)
     void trackUserEnterChat(Long roomId, Long conversationId, Long userId, String sessionId);
     void trackUserLeaveChat(Long roomId, Long conversationId, Long userId, String sessionId);
-    void autoMarkMessagesAsReadForActiveUsers(String messageId);
-    Set<Long> getActiveUsersInChat(Long roomId, Long conversationId);
-    void broadcastReadStatusUpdate(String messageId, Long readerId);
 
-    //pin message
+    // Pin message functionality
     void pinMessage(String messageId, Boolean pinned, Long userId);
     List<ChatMessage> getPinnedMessages(Long roomId, Long conversationId, Long userId);
     Map<String, Object> getMessagePageInfo(String messageId, int pageSize, Long userId);

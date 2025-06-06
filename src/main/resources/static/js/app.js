@@ -13,6 +13,8 @@ let typingUsers = new Set();
 let currentMessageForReaction = null;
 let currentChatKey = null;
 let readReceipts = new Map();
+let isUserActiveInChat = true;
+let scrollTimeout;
 
 // Authentication functions
 function switchTab(tab) {
@@ -762,6 +764,10 @@ function showMessage(message, shouldScroll = true) {
     // Insert before typing indicator
     wrapper.insertBefore(messageElement, typingIndicator);
 
+    if (messageVisibilityTracker) {
+        messageVisibilityTracker.observeNewMessage(messageElement);
+    }
+
     // Auto scroll for new messages
     if (shouldScroll) {
         const container = document.getElementById('messagesContainer');
@@ -834,6 +840,7 @@ function createMessageElement(message) {
 
     messageElement.className = messageClass;
     messageElement.dataset.messageId = message.id;
+    messageElement.dataset.senderId = message.senderId;
 
     return messageElement;
 }
@@ -1576,3 +1583,119 @@ setInterval(() => {
 }, 20 * 60 * 1000);
 
 console.log('🚀 Fixed Chat Application with Proper Scrolling initialized');
+
+class MessageVisibilityTracker {
+    constructor() {
+        this.observer = null;
+        this.visibilityTimeouts = new Map();
+        this.trackedMessages = new Set();
+        this.currentUserId = window.currentUserId; // Lấy từ global variable
+
+        this.init();
+    }
+
+    init() {
+        if (!window.IntersectionObserver) {
+            console.warn('IntersectionObserver not supported');
+            return;
+        }
+
+        this.observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => this.handleVisibilityChange(entry));
+        }, {
+            threshold: 0.5,
+            rootMargin: '0px 0px -50px 0px'
+        });
+
+        this.observeExistingMessages();
+    }
+
+    handleVisibilityChange(entry) {
+        const messageElement = entry.target;
+        const messageId = messageElement.dataset.messageId;
+        const senderId = messageElement.dataset.senderId;
+        const isVisible = entry.isIntersecting;
+
+        // Chỉ track messages từ người khác
+        if (!messageId || !senderId || !currentUser || senderId === currentUser.id.toString()) {
+            return;
+        }
+
+        // Clear existing timeout
+        if (this.visibilityTimeouts.has(messageId)) {
+            clearTimeout(this.visibilityTimeouts.get(messageId));
+        }
+
+        // Debounce visibility updates
+        const timeout = setTimeout(() => {
+            this.sendVisibilityUpdate(messageId, isVisible);
+        }, 300);
+
+        this.visibilityTimeouts.set(messageId, timeout);
+    }
+
+    sendVisibilityUpdate(messageId, visible) {
+        if (window.stompClient && window.stompClient.connected) {
+            window.stompClient.send("/app/message/visibility", {}, JSON.stringify({
+                messageId: messageId,
+                visible: visible
+            }));
+
+            console.debug(`Message visibility updated: ${messageId} - ${visible ? 'visible' : 'hidden'}`);
+        }
+    }
+
+    observeExistingMessages() {
+        if (!this.observer) return;
+
+        document.querySelectorAll('.message[data-message-id]').forEach(messageEl => {
+            const messageId = messageEl.dataset.messageId;
+            if (!this.trackedMessages.has(messageId)) {
+                this.observer.observe(messageEl);
+                this.trackedMessages.add(messageId);
+            }
+        });
+    }
+
+    observeNewMessage(messageElement) {
+        if (!this.observer || !messageElement) return;
+
+        const messageId = messageElement.dataset.messageId;
+        if (messageId && !this.trackedMessages.has(messageId)) {
+            this.observer.observe(messageElement);
+            this.trackedMessages.add(messageId);
+        }
+    }
+
+    cleanup() {
+        if (this.observer) {
+            this.observer.disconnect();
+        }
+        this.visibilityTimeouts.forEach(timeout => clearTimeout(timeout));
+        this.visibilityTimeouts.clear();
+        this.trackedMessages.clear();
+    }
+}
+
+// Initialize visibility tracker
+let messageVisibilityTracker;
+
+document.addEventListener('DOMContentLoaded', () => {
+    messageVisibilityTracker = new MessageVisibilityTracker();
+});
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', () => {
+    if (messageVisibilityTracker) {
+        messageVisibilityTracker.cleanup();
+    }
+});
+
+document.getElementById('messagesContainer').addEventListener('scroll', function() {
+    isUserActiveInChat = true;
+
+    clearTimeout(scrollTimeout);
+    scrollTimeout = setTimeout(() => {
+        isUserActiveInChat = false;
+    }, 2000); // User inactive after 2 seconds of no scrolling
+});

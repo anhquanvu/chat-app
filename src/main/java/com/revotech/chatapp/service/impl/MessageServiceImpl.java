@@ -10,12 +10,12 @@ import com.revotech.chatapp.model.dto.request.MarkMessageReadRequest;
 import com.revotech.chatapp.model.dto.request.SendMessageRequest;
 import com.revotech.chatapp.model.dto.response.WebSocketResponse;
 import com.revotech.chatapp.model.entity.*;
-import com.revotech.chatapp.model.enums.DeliveryStatus;
 import com.revotech.chatapp.model.enums.MessageStatus;
 import com.revotech.chatapp.model.enums.MessageType;
 import com.revotech.chatapp.repository.*;
 import com.revotech.chatapp.security.UserPrincipal;
 import com.revotech.chatapp.service.MessageService;
+import com.revotech.chatapp.service.UserSessionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -45,29 +45,34 @@ public class MessageServiceImpl implements MessageService {
     private final RoomRepository roomRepository;
     private final ConversationRepository conversationRepository;
     private final MessageReactionRepository messageReactionRepository;
-    private final MessageDeliveryRepository messageDeliveryRepository;
     private final SimpMessageSendingOperations messagingTemplate;
     private final RoomMemberRepository roomMemberRepository;
+    private final UserSessionService userSessionService;
 
+    // Active session tracking for real-time features
     private final Map<String, Set<String>> activeChatSessions = new ConcurrentHashMap<>();
     private final Map<String, Long> sessionToUser = new ConcurrentHashMap<>();
+
+    // Last read tracking for rooms (Discord-style)
+    private final Map<String, Map<Long, LocalDateTime>> lastReadTimestamps = new ConcurrentHashMap<>();
+
+    // Message visibility tracking for mobile/web
+    private final Map<String, Set<String>> visibleMessages = new ConcurrentHashMap<>();
 
     @Override
     public void trackUserEnterChat(Long roomId, Long conversationId, Long userId, String sessionId) {
         String chatKey = buildChatKey(roomId, conversationId);
 
-        // Track session in chat
         activeChatSessions.computeIfAbsent(chatKey, k -> ConcurrentHashMap.newKeySet())
                 .add(sessionId);
         sessionToUser.put(sessionId, userId);
 
-        // FIXED: Auto mark existing unread messages as read with immediate broadcast
-        CompletableFuture.runAsync(() -> {
-            autoMarkMessagesAsRead(roomId, conversationId, userId);
-
-            // FIXED: Also mark recent messages as delivered for this user
-            autoMarkMessagesAsDelivered(roomId, conversationId, userId);
-        });
+        // CHỈ auto-mark cho 1:1 conversations khi user enter
+        if (conversationId != null) {
+            CompletableFuture.runAsync(() -> {
+                autoMarkMessagesAsRead(null, conversationId, userId);
+            });
+        }
 
         log.debug("User {} entered chat {} with session {}", userId, chatKey, sessionId);
     }
@@ -85,89 +90,44 @@ public class MessageServiceImpl implements MessageService {
         }
         sessionToUser.remove(sessionId);
 
+        // Clean up visible messages tracking
+        String visibilityKey = chatKey + ":" + sessionId;
+        visibleMessages.remove(visibilityKey);
+
         log.debug("User {} left chat {} with session {}", userId, chatKey, sessionId);
     }
 
-    @Override
-    public void autoMarkMessagesAsReadForActiveUsers(String messageId) {
-        Message message = messageRepository.findByMessageId(messageId)
-                .orElse(null);
+    public void trackMessageVisibility(String messageId, Long userId, String sessionId, boolean visible) {
+        String visibilityKey = sessionId + ":visible";
 
-        if (message == null) return;
-
-        Set<Long> activeUsers = getActiveUsersInChat(
-                message.getRoom() != null ? message.getRoom().getId() : null,
-                message.getConversation() != null ? message.getConversation().getId() : null
-        );
-
-        // Mark as read for all active users (except sender)
-        for (Long userId : activeUsers) {
-            if (!userId.equals(message.getSender().getId())) {
-                User user = userRepository.findById(userId).orElse(null);
-                if (user != null) {
-                    markSingleMessageAsRead(message, user);
-                    // FIXED: Broadcast read status immediately
-                    broadcastReadStatusUpdate(messageId, userId);
-                }
+        if (visible) {
+            visibleMessages.computeIfAbsent(visibilityKey, k -> ConcurrentHashMap.newKeySet())
+                    .add(messageId);
+        } else {
+            Set<String> messages = visibleMessages.get(visibilityKey);
+            if (messages != null) {
+                messages.remove(messageId);
             }
         }
 
-        // FIXED: Update overall message status after all reads
-        updateMessageOverallStatus(message);
-    }
+        // Auto-mark as read for 1:1 conversations nếu message visible
+        if (visible) {
+            CompletableFuture.runAsync(() -> {
+                try {
+                    Thread.sleep(1000); // Telegram-style delay
+                    Message message = messageRepository.findByMessageId(messageId).orElse(null);
+                    if (message != null && message.getConversation() != null &&
+                            !message.getSender().getId().equals(userId)) {
 
-    @Override
-    public Set<Long> getActiveUsersInChat(Long roomId, Long conversationId) {
-        String chatKey = buildChatKey(roomId, conversationId);
-        Set<String> sessions = activeChatSessions.get(chatKey);
-
-        if (sessions == null || sessions.isEmpty()) {
-            return Set.of();
+                        message.setStatus(MessageStatus.READ);
+                        messageRepository.save(message);
+                        broadcastReadStatusUpdate(messageId, userId);
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            });
         }
-
-        return sessions.stream()
-                .map(sessionToUser::get)
-                .filter(Objects::nonNull)
-                .collect(Collectors.toSet());
-    }
-
-    @Override
-    public void broadcastReadStatusUpdate(String messageId, Long readerId) {
-        Message message = messageRepository.findByMessageId(messageId).orElse(null);
-        if (message == null) return;
-
-        User reader = userRepository.findById(readerId).orElse(null);
-        if (reader == null) return;
-
-        // Create read status update
-        Map<String, Object> readStatusData = new HashMap<>();
-        readStatusData.put("messageId", messageId);
-        readStatusData.put("readerId", readerId);
-        readStatusData.put("readerName", reader.getFullName());
-        readStatusData.put("timestamp", LocalDateTime.now());
-
-        WebSocketResponse<Map<String, Object>> response = WebSocketResponse.<Map<String, Object>>builder()
-                .type("MESSAGE_READ")
-                .action("UPDATE")
-                .data(readStatusData)
-                .senderId(readerId)
-                .timestamp(LocalDateTime.now())
-                .build();
-
-        String destination = message.getRoom() != null ?
-                "/topic/room/" + message.getRoom().getId() :
-                "/topic/conversation/" + message.getConversation().getId();
-
-        messagingTemplate.convertAndSend(destination, response);
-
-        // Send to message sender specifically
-        messagingTemplate.convertAndSendToUser(
-                message.getSender().getUsername(),
-                "/queue/read-receipts",
-                response
-        );
-
-        log.debug("Broadcast read status for message {} by user {}", messageId, readerId);
     }
 
     @Override
@@ -182,7 +142,7 @@ public class MessageServiceImpl implements MessageService {
         User sender = userRepository.findById(senderId)
                 .orElseThrow(() -> new AppException("Sender not found"));
 
-        // Check if user is member of the room
+        // Check membership
         boolean isMember = room.getMembers().stream()
                 .anyMatch(member -> member.getUser().getId().equals(senderId));
 
@@ -190,13 +150,14 @@ public class MessageServiceImpl implements MessageService {
             throw new AppException("You are not a member of this room");
         }
 
-        // Create message
+        // Discord/Slack style - room messages chỉ có SENT status
         Message message = Message.builder()
                 .messageId(UUID.randomUUID().toString())
                 .room(room)
                 .sender(sender)
                 .content(request.getContent())
                 .type(request.getType())
+                .status(MessageStatus.SENT) // Room messages luôn SENT
                 .build();
 
         if (request.getReplyToId() != null) {
@@ -207,26 +168,12 @@ public class MessageServiceImpl implements MessageService {
 
         message = messageRepository.save(message);
 
-        // Update room last activity
+        // Update room activity
         room.setLastActivityAt(LocalDateTime.now());
         roomRepository.save(room);
 
         ChatMessage chatMessage = convertMessageToDTO(message);
-
-        // Broadcast message first
         broadcastMessage(chatMessage);
-
-        // FIXED: Immediate auto-mark for active users
-        final String messageId = message.getMessageId();
-        CompletableFuture.runAsync(() -> {
-            try {
-                // Small delay to ensure message is displayed first
-                Thread.sleep(500);
-                autoMarkMessagesAsReadForActiveUsers(messageId);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        });
 
         return chatMessage;
     }
@@ -243,7 +190,7 @@ public class MessageServiceImpl implements MessageService {
         User sender = userRepository.findById(senderId)
                 .orElseThrow(() -> new AppException("Sender not found"));
 
-        // Check if user is participant
+        // Check participation
         if (!senderId.equals(conversation.getParticipant1Id()) &&
                 !senderId.equals(conversation.getParticipant2Id())) {
             throw new AppException("You are not a participant in this conversation");
@@ -256,6 +203,7 @@ public class MessageServiceImpl implements MessageService {
                 .sender(sender)
                 .content(request.getContent())
                 .type(request.getType())
+                .status(MessageStatus.SENT)
                 .build();
 
         if (request.getReplyToId() != null) {
@@ -266,27 +214,170 @@ public class MessageServiceImpl implements MessageService {
 
         message = messageRepository.save(message);
 
-        // Update conversation last message time
+        // Update conversation
         conversation.setLastMessageAt(LocalDateTime.now());
         conversationRepository.save(conversation);
 
         ChatMessage chatMessage = convertMessageToDTO(message);
-
-        // Broadcast message first
         broadcastMessage(chatMessage);
 
-        // FIXED: Immediate auto-mark for active users in conversation
+        // WhatsApp/Telegram-style delivery & read logic
+        Long recipientId = senderId.equals(conversation.getParticipant1Id())
+                ? conversation.getParticipant2Id()
+                : conversation.getParticipant1Id();
+
         final String messageId = message.getMessageId();
-        CompletableFuture.runAsync(() -> {
-            try {
-                Thread.sleep(500);
-                autoMarkMessagesAsReadForActiveUsers(messageId);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+        final Long finalRecipientId = recipientId;
+        final Long finalMessageEntityId = message.getId();
+
+        // Check recipient status using session tracking (not database)
+        boolean recipientHasActiveSessions = userSessionService.getUserSessions(finalRecipientId).size() > 0;
+
+        String chatKey = "conversation:" + conversation.getId();
+        Set<String> activeSessions = activeChatSessions.get(chatKey);
+        boolean recipientActiveInConversation = activeSessions != null &&
+                activeSessions.stream()
+                        .map(sessionToUser::get)
+                        .filter(Objects::nonNull)
+                        .anyMatch(userId -> finalRecipientId.equals(userId));
+
+        log.debug("Message delivery check - Recipient: {}, HasSessions: {}, ActiveInConv: {}",
+                finalRecipientId, recipientHasActiveSessions, recipientActiveInConversation);
+
+        if (recipientHasActiveSessions) {
+            // Mark as DELIVERED (WhatsApp double-tick style)
+            CompletableFuture.runAsync(() -> {
+                try {
+                    Thread.sleep(300); // Network simulation delay
+                    messageRepository.findById(finalMessageEntityId).ifPresent(msg -> {
+                        msg.setStatus(MessageStatus.DELIVERED);
+                        messageRepository.save(msg);
+                        broadcastStatusUpdate(messageId, MessageStatus.DELIVERED);
+                    });
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+
+            // Mark as READ if recipient active trong conversation (Blue tick style)
+            if (recipientActiveInConversation) {
+                CompletableFuture.runAsync(() -> {
+                    try {
+                        Thread.sleep(1500); // Reading simulation delay
+                        messageRepository.findById(finalMessageEntityId).ifPresent(msg -> {
+                            msg.setStatus(MessageStatus.READ);
+                            messageRepository.save(msg);
+                            broadcastReadStatusUpdate(messageId, finalRecipientId);
+                        });
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                });
             }
-        });
+        }
 
         return chatMessage;
+    }
+
+    @Override
+    public void markMessageAsRead(MarkMessageReadRequest request, Long userId) {
+        Message message = messageRepository.findByMessageId(request.getMessageId())
+                .orElseThrow(() -> new AppException("Message not found"));
+
+        if (message.getSender().getId().equals(userId)) {
+            return; // Don't mark own messages
+        }
+
+        if (message.getConversation() != null) {
+            // 1:1 conversation - update message status
+            message.setStatus(MessageStatus.READ);
+            messageRepository.save(message);
+            broadcastReadStatusUpdate(message.getMessageId(), userId);
+
+            log.debug("Message {} marked as read by user {} in conversation",
+                    request.getMessageId(), userId);
+        } else {
+            // Room message - chỉ update last read timestamp (Discord style)
+            String roomKey = "room:" + message.getRoom().getId();
+            lastReadTimestamps.computeIfAbsent(roomKey, k -> new ConcurrentHashMap<>())
+                    .put(userId, LocalDateTime.now());
+
+            log.debug("Updated last read timestamp for user {} in room {}",
+                    userId, message.getRoom().getId());
+        }
+    }
+
+    @Override
+    public void autoMarkMessagesAsRead(Long roomId, Long conversationId, Long userId) {
+        if (roomId != null) {
+            // Room: chỉ update timestamp
+            String roomKey = "room:" + roomId;
+            lastReadTimestamps.computeIfAbsent(roomKey, k -> new ConcurrentHashMap<>())
+                    .put(userId, LocalDateTime.now());
+
+            log.debug("Auto-updated last read timestamp for user {} in room {}", userId, roomId);
+        } else if (conversationId != null) {
+            // 1:1: mark unread messages as read
+            List<Message> unreadMessages = messageRepository
+                    .findUnreadMessagesInConversation(conversationId, userId);
+
+            for (Message message : unreadMessages) {
+                if (!message.getSender().getId().equals(userId)) {
+                    message.setStatus(MessageStatus.READ);
+                    messageRepository.save(message);
+                    broadcastReadStatusUpdate(message.getMessageId(), userId);
+                }
+            }
+
+            log.debug("Auto-marked {} messages as read in conversation {}",
+                    unreadMessages.size(), conversationId);
+        }
+    }
+
+    @Override
+    public Long getUnreadMessagesCount(Long roomId, Long conversationId, Long userId) {
+        if (roomId != null) {
+            // Discord-style: count based on last read timestamp
+            String roomKey = "room:" + roomId;
+            LocalDateTime lastRead = lastReadTimestamps
+                    .getOrDefault(roomKey, Collections.emptyMap())
+                    .get(userId);
+
+            if (lastRead == null) {
+                return messageRepository.countByRoomIdAndIsDeletedFalse(roomId);
+            } else {
+                return messageRepository.countMessagesAfterTimestamp(roomId, lastRead, userId);
+            }
+        } else if (conversationId != null) {
+            // WhatsApp-style: count unread status messages
+            return messageRepository.countUnreadMessagesInConversation(conversationId, userId);
+        }
+
+        return 0L;
+    }
+
+    @Override
+    public void cleanupUserSessionFromAllChats(Long userId, String sessionId) {
+        // Cleanup từ active sessions
+        activeChatSessions.entrySet().removeIf(entry -> {
+            Set<String> sessions = entry.getValue();
+            boolean removed = sessions.remove(sessionId);
+
+            if (removed) {
+                log.debug("Removed session {} from chat {}", sessionId, entry.getKey());
+                return sessions.isEmpty();
+            }
+            return false;
+        });
+
+        // Cleanup từ session mapping
+        sessionToUser.remove(sessionId);
+
+        // Cleanup từ visibility tracking
+        String visibilityKey = sessionId + ":visible";
+        visibleMessages.remove(visibilityKey);
+
+        log.debug("Cleaned up all sessions for user {} with session {}", userId, sessionId);
     }
 
     @Override
@@ -403,61 +494,6 @@ public class MessageServiceImpl implements MessageService {
     }
 
     @Override
-    public void markMessageAsRead(MarkMessageReadRequest request, Long userId) {
-        Message message = messageRepository.findByMessageId(request.getMessageId())
-                .orElseThrow(() -> new AppException("Message not found"));
-
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new AppException("User not found"));
-
-        // Don't mark own messages as read
-        if (message.getSender().getId().equals(userId)) {
-            return;
-        }
-
-        // Check if delivery record exists
-        var existingDelivery = messageDeliveryRepository.findByMessageAndUser(message, user);
-
-        if (existingDelivery.isPresent()) {
-            MessageDelivery delivery = existingDelivery.get();
-            delivery.setStatus(DeliveryStatus.READ);
-            delivery.setReadAt(LocalDateTime.now());
-            messageDeliveryRepository.save(delivery);
-        } else {
-            // Create new delivery record
-            MessageDelivery delivery = MessageDelivery.builder()
-                    .message(message)
-                    .user(user)
-                    .status(DeliveryStatus.READ)
-                    .readAt(LocalDateTime.now())
-                    .build();
-            messageDeliveryRepository.save(delivery);
-        }
-
-        // Update message status to READ for sender
-        message.setStatus(MessageStatus.READ);
-        messageRepository.save(message);
-
-        // Broadcast status update to sender
-        ChatMessage updatedMessage = convertMessageToDTO(message);
-
-        WebSocketResponse<ChatMessage> response = WebSocketResponse.<ChatMessage>builder()
-                .type("MESSAGE")
-                .action("STATUS_UPDATE")
-                .data(updatedMessage)
-                .timestamp(LocalDateTime.now())
-                .build();
-
-        String destination = message.getRoom() != null ?
-                "/topic/room/" + message.getRoom().getId() :
-                "/topic/conversation/" + message.getConversation().getId();
-
-        messagingTemplate.convertAndSend(destination, response);
-
-        log.info("Message {} marked as read by user {}", request.getMessageId(), userId);
-    }
-
-    @Override
     public void addReaction(AddReactionRequest request, Long userId) {
         Message message = messageRepository.findByMessageId(request.getMessageId())
                 .orElseThrow(() -> new AppException("Message not found"));
@@ -481,10 +517,9 @@ public class MessageServiceImpl implements MessageService {
             messageReactionRepository.save(reaction);
         }
 
-        // Broadcast reaction update với message ID
+        // Broadcast reaction update
         List<MessageReactionDTO> reactions = getMessageReactions(request.getMessageId());
 
-        // Tạo response data với messageId
         Map<String, Object> responseData = new HashMap<>();
         responseData.put("messageId", request.getMessageId());
         responseData.put("reactions", reactions);
@@ -517,10 +552,9 @@ public class MessageServiceImpl implements MessageService {
         messageReactionRepository.findByMessageAndUser(message, user)
                 .ifPresent(messageReactionRepository::delete);
 
-        // Broadcast reaction update với message ID
+        // Broadcast reaction update
         List<MessageReactionDTO> reactions = getMessageReactions(messageId);
 
-        // Tạo response data với messageId
         Map<String, Object> responseData = new HashMap<>();
         responseData.put("messageId", messageId);
         responseData.put("reactions", reactions);
@@ -582,18 +616,6 @@ public class MessageServiceImpl implements MessageService {
                 .collect(Collectors.toList());
     }
 
-    private Long getCurrentUserId() {
-        try {
-            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-            if (authentication != null && authentication.getPrincipal() instanceof UserPrincipal) {
-                return ((UserPrincipal) authentication.getPrincipal()).getId();
-            }
-        } catch (Exception e) {
-            // Ignore
-        }
-        return null;
-    }
-
     @Override
     public void broadcastMessage(ChatMessage message) {
         WebSocketResponse<ChatMessage> response = WebSocketResponse.<ChatMessage>builder()
@@ -648,7 +670,6 @@ public class MessageServiceImpl implements MessageService {
     public Page<ChatMessage> searchMessages(String keyword, Long userId, int page, int size) {
         Pageable pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
 
-        // This is a simplified search - in production, you might want to use Elasticsearch
         Page<Message> messages = messageRepository.findByContentContainingIgnoreCaseAndIsDeletedFalse(keyword, pageable);
 
         return messages.map(this::convertMessageToDTO);
@@ -696,302 +717,6 @@ public class MessageServiceImpl implements MessageService {
         return messages.map(this::convertMessageToDTO);
     }
 
-    private ChatMessage convertMessageToDTO(Message message) {
-
-        List<MessageReactionDTO> reactions = getMessageReactions(message.getMessageId());
-
-        // Get pinned by user info if message is pinned
-        String pinnedByUsername = null;
-        if (message.getIsPinned() && message.getPinnedBy() != null) {
-            User pinnedByUser = userRepository.findById(message.getPinnedBy()).orElse(null);
-            if (pinnedByUser != null) {
-                pinnedByUsername = pinnedByUser.getUsername();
-            }
-        }
-
-        ChatMessage chatMessage = ChatMessage.builder()
-                .id(message.getMessageId())
-                .content(message.getContent())
-                .senderId(message.getSender().getId())
-                .senderName(message.getSender().getFullName())
-                .senderUsername(message.getSender().getUsername())
-                .senderAvatar(message.getSender().getAvatarUrl())
-                .type(message.getType())
-                .status(message.getStatus())
-                .timestamp(message.getCreatedAt())
-                .roomId(message.getRoom() != null ? message.getRoom().getId() : null)
-                .conversationId(message.getConversation() != null ? message.getConversation().getId() : null)
-                .isEdited(message.getIsEdited())
-                .editedAt(message.getEditedAt())
-                .isPinned(message.getIsPinned())
-                .pinnedAt(message.getPinnedAt())
-                .pinnedByUsername(pinnedByUsername)
-                .build();
-
-        chatMessage.setReactions(reactions);
-
-        return chatMessage;
-    }
-
-
-
-    private UserSummaryDTO convertToUserSummary(User user) {
-        return UserSummaryDTO.builder()
-                .id(user.getId())
-                .username(user.getUsername())
-                .fullName(user.getFullName())
-                .avatarUrl(user.getAvatarUrl())
-                .isOnline(user.getIsOnline())
-                .lastSeen(user.getLastSeen())
-                .bio(user.getBio())
-                .build();
-    }
-
-    @Override
-    public void autoMarkMessagesAsRead(Long roomId, Long conversationId, Long userId) {
-        List<Message> unreadMessages;
-
-        if (roomId != null) {
-            unreadMessages = messageRepository.findUnreadMessagesInRoom(roomId, userId);
-        } else if (conversationId != null) {
-            unreadMessages = messageRepository.findUnreadMessagesInConversation(conversationId, userId);
-        } else {
-            return;
-        }
-
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new AppException("User not found"));
-
-        for (Message message : unreadMessages) {
-            markSingleMessageAsRead(message, user);
-        }
-    }
-
-    @Override
-    public void autoMarkMessagesAsDelivered(Long roomId, Long conversationId, Long userId) {
-        List<Message> undeliveredMessages;
-
-        if (roomId != null) {
-            undeliveredMessages = messageRepository.findUndeliveredMessagesInRoom(roomId, userId);
-        } else if (conversationId != null) {
-            undeliveredMessages = messageRepository.findUndeliveredMessagesInConversation(conversationId, userId);
-        } else {
-            return;
-        }
-
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new AppException("User not found"));
-
-        for (Message message : undeliveredMessages) {
-            markSingleMessageAsDelivered(message, user);
-        }
-    }
-
-    @Override
-    public void updateMessageDeliveryStatus(String messageId, Long userId) {
-        Message message = messageRepository.findByMessageId(messageId)
-                .orElseThrow(() -> new AppException("Message not found"));
-
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new AppException("User not found"));
-
-        // Skip own messages
-        if (message.getSender().getId().equals(userId)) {
-            return;
-        }
-
-        markSingleMessageAsDelivered(message, user);
-    }
-
-    private void markSingleMessageAsRead(Message message, User user) {
-        if (user == null || message.getSender().getId().equals(user.getId())) {
-            return; // Don't mark own messages as read
-        }
-
-        var existingDelivery = messageDeliveryRepository.findByMessageAndUser(message, user);
-
-        if (existingDelivery.isPresent()) {
-            MessageDelivery delivery = existingDelivery.get();
-            if (delivery.getStatus() != DeliveryStatus.READ) {
-                delivery.setStatus(DeliveryStatus.READ);
-                delivery.setReadAt(LocalDateTime.now());
-                messageDeliveryRepository.save(delivery);
-
-                // FIXED: Broadcast status update immediately after saving
-                broadcastMessageStatusUpdate(message, user, DeliveryStatus.READ);
-            }
-        } else {
-            MessageDelivery delivery = MessageDelivery.builder()
-                    .message(message)
-                    .user(user)
-                    .status(DeliveryStatus.READ)
-                    .readAt(LocalDateTime.now())
-                    .build();
-            messageDeliveryRepository.save(delivery);
-
-            // FIXED: Broadcast status update for new delivery
-            broadcastMessageStatusUpdate(message, user, DeliveryStatus.READ);
-        }
-    }
-
-    private void markSingleMessageAsDelivered(Message message, User user) {
-        var existingDelivery = messageDeliveryRepository.findByMessageAndUser(message, user);
-
-        if (existingDelivery.isPresent()) {
-            MessageDelivery delivery = existingDelivery.get();
-            if (delivery.getStatus() == null || delivery.getStatus() == DeliveryStatus.SENT) {
-                delivery.setStatus(DeliveryStatus.DELIVERED);
-                messageDeliveryRepository.save(delivery);
-
-                broadcastStatusUpdate(message, MessageStatus.DELIVERED);
-            }
-        } else {
-            MessageDelivery delivery = MessageDelivery.builder()
-                    .message(message)
-                    .user(user)
-                    .status(DeliveryStatus.DELIVERED)
-                    .build();
-            messageDeliveryRepository.save(delivery);
-
-            broadcastStatusUpdate(message, MessageStatus.DELIVERED);
-        }
-    }
-
-    private void broadcastStatusUpdate(Message message, MessageStatus newStatus) {
-        // Update message status
-        message.setStatus(newStatus);
-        messageRepository.save(message);
-
-        // Create status update response
-        Map<String, Object> statusData = new HashMap<>();
-        statusData.put("messageId", message.getMessageId());
-        statusData.put("status", newStatus);
-        statusData.put("timestamp", LocalDateTime.now());
-
-        WebSocketResponse<Map<String, Object>> response = WebSocketResponse.<Map<String, Object>>builder()
-                .type("MESSAGE_STATUS")
-                .action("UPDATE")
-                .data(statusData)
-                .timestamp(LocalDateTime.now())
-                .build();
-
-        String destination = message.getRoom() != null ?
-                "/topic/room/" + message.getRoom().getId() :
-                "/topic/conversation/" + message.getConversation().getId();
-
-        messagingTemplate.convertAndSend(destination, response);
-
-        // Also send to sender specifically
-        messagingTemplate.convertAndSendToUser(
-                message.getSender().getUsername(),
-                "/queue/message-status",
-                response
-        );
-
-        log.debug("Status update broadcasted for message {} to {}", message.getMessageId(), newStatus);
-    }
-
-
-    private String buildChatKey(Long roomId, Long conversationId) {
-        if (roomId != null) {
-            return "room:" + roomId;
-        } else if (conversationId != null) {
-            return "conversation:" + conversationId;
-        }
-        throw new IllegalArgumentException("Either roomId or conversationId must be provided");
-    }
-
-    private void updateMessageOverallStatus(Message message) {
-        MessageStatus newStatus = determineOverallMessageStatus(message);
-
-        if (newStatus != message.getStatus()) {
-            message.setStatus(newStatus);
-            messageRepository.save(message);
-
-            // FIXED: Broadcast the updated message status
-            Map<String, Object> statusData = new HashMap<>();
-            statusData.put("messageId", message.getMessageId());
-            statusData.put("status", newStatus);
-            statusData.put("timestamp", LocalDateTime.now());
-
-            WebSocketResponse<Map<String, Object>> response = WebSocketResponse.<Map<String, Object>>builder()
-                    .type("MESSAGE_STATUS")
-                    .action("UPDATE")
-                    .data(statusData)
-                    .timestamp(LocalDateTime.now())
-                    .build();
-
-            String destination = message.getRoom() != null ?
-                    "/topic/room/" + message.getRoom().getId() :
-                    "/topic/conversation/" + message.getConversation().getId();
-
-            messagingTemplate.convertAndSend(destination, response);
-
-            // Send to sender specifically
-            messagingTemplate.convertAndSendToUser(
-                    message.getSender().getUsername(),
-                    "/queue/message-status",
-                    response
-            );
-        }
-    }
-
-    private void broadcastMessageStatusUpdate(Message message, User reader, DeliveryStatus status) {
-        // Create status update for sender
-        Map<String, Object> statusData = new HashMap<>();
-        statusData.put("messageId", message.getMessageId());
-        statusData.put("status", determineOverallMessageStatus(message));
-        statusData.put("readBy", reader.getFullName());
-        statusData.put("timestamp", LocalDateTime.now());
-
-        WebSocketResponse<Map<String, Object>> response = WebSocketResponse.<Map<String, Object>>builder()
-                .type("MESSAGE_STATUS")
-                .action("UPDATE")
-                .data(statusData)
-                .timestamp(LocalDateTime.now())
-                .build();
-
-        // Send to message sender specifically
-        messagingTemplate.convertAndSendToUser(
-                message.getSender().getUsername(),
-                "/queue/message-status",
-                response
-        );
-
-        // Also send to the chat channel
-        String destination = message.getRoom() != null ?
-                "/topic/room/" + message.getRoom().getId() :
-                "/topic/conversation/" + message.getConversation().getId();
-
-        messagingTemplate.convertAndSend(destination, response);
-
-        log.debug("Message status update sent: {} read by {}", message.getMessageId(), reader.getFullName());
-    }
-
-    private MessageStatus determineOverallMessageStatus(Message message) {
-        long totalRecipients = 0;
-        long readCount = 0;
-        long deliveredCount = 0;
-
-        if (message.getRoom() != null) {
-            totalRecipients = roomMemberRepository.countActiveMembers(message.getRoom().getId()) - 1; // Exclude sender
-            readCount = messageDeliveryRepository.countByMessageAndStatus(message, DeliveryStatus.READ);
-            deliveredCount = messageDeliveryRepository.countByMessageAndStatus(message, DeliveryStatus.DELIVERED);
-        } else if (message.getConversation() != null) {
-            totalRecipients = 1; // Direct conversation = 1 other participant
-            readCount = messageDeliveryRepository.countByMessageAndStatus(message, DeliveryStatus.READ);
-            deliveredCount = messageDeliveryRepository.countByMessageAndStatus(message, DeliveryStatus.DELIVERED);
-        }
-
-        if (readCount == totalRecipients && totalRecipients > 0) {
-            return MessageStatus.READ;
-        } else if (deliveredCount >= totalRecipients && totalRecipients > 0) {
-            return MessageStatus.DELIVERED;
-        } else {
-            return MessageStatus.SENT;
-        }
-    }
-
     @Override
     public void pinMessage(String messageId, Boolean pinned, Long userId) {
         Message message = messageRepository.findByMessageId(messageId)
@@ -1013,7 +738,7 @@ public class MessageServiceImpl implements MessageService {
 
             hasPermission = member.getRole().name().equals("OWNER") ||
                     member.getRole().name().equals("ADMIN") ||
-                    message.getSender().getId().equals(userId); // Message owner can pin/unpin their own
+                    message.getSender().getId().equals(userId);
         } else if (message.getConversation() != null) {
             // For conversations, both participants can pin/unpin
             hasPermission = true;
@@ -1146,5 +871,129 @@ public class MessageServiceImpl implements MessageService {
         result.put("totalNewerMessages", newerMessagesCount);
 
         return result;
+    }
+
+    // Helper methods
+    private Long getCurrentUserId() {
+        try {
+            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+            if (authentication != null && authentication.getPrincipal() instanceof UserPrincipal) {
+                return ((UserPrincipal) authentication.getPrincipal()).getId();
+            }
+        } catch (Exception e) {
+            // Ignore
+        }
+        return null;
+    }
+
+    private String buildChatKey(Long roomId, Long conversationId) {
+        if (roomId != null) {
+            return "room:" + roomId;
+        } else if (conversationId != null) {
+            return "conversation:" + conversationId;
+        }
+        throw new IllegalArgumentException("Either roomId or conversationId must be provided");
+    }
+
+    private ChatMessage convertMessageToDTO(Message message) {
+        List<MessageReactionDTO> reactions = getMessageReactions(message.getMessageId());
+
+        // Get pinned by user info if message is pinned
+        String pinnedByUsername = null;
+        if (message.getIsPinned() && message.getPinnedBy() != null) {
+            User pinnedByUser = userRepository.findById(message.getPinnedBy()).orElse(null);
+            if (pinnedByUser != null) {
+                pinnedByUsername = pinnedByUser.getUsername();
+            }
+        }
+
+        ChatMessage chatMessage = ChatMessage.builder()
+                .id(message.getMessageId())
+                .content(message.getContent())
+                .senderId(message.getSender().getId())
+                .senderName(message.getSender().getFullName())
+                .senderUsername(message.getSender().getUsername())
+                .senderAvatar(message.getSender().getAvatarUrl())
+                .type(message.getType())
+                .status(message.getStatus())
+                .timestamp(message.getCreatedAt())
+                .roomId(message.getRoom() != null ? message.getRoom().getId() : null)
+                .conversationId(message.getConversation() != null ? message.getConversation().getId() : null)
+                .isEdited(message.getIsEdited())
+                .editedAt(message.getEditedAt())
+                .isPinned(message.getIsPinned())
+                .pinnedAt(message.getPinnedAt())
+                .pinnedByUsername(pinnedByUsername)
+                .build();
+
+        chatMessage.setReactions(reactions);
+        return chatMessage;
+    }
+
+    private UserSummaryDTO convertToUserSummary(User user) {
+        return UserSummaryDTO.builder()
+                .id(user.getId())
+                .username(user.getUsername())
+                .fullName(user.getFullName())
+                .avatarUrl(user.getAvatarUrl())
+                .isOnline(user.getIsOnline())
+                .lastSeen(user.getLastSeen())
+                .bio(user.getBio())
+                .build();
+    }
+
+    // Simplified broadcast methods for 1:1 conversations only
+    private void broadcastStatusUpdate(String messageId, MessageStatus status) {
+        Map<String, Object> statusData = Map.of(
+                "messageId", messageId,
+                "status", status,
+                "timestamp", LocalDateTime.now()
+        );
+
+        WebSocketResponse<Map<String, Object>> response = WebSocketResponse.<Map<String, Object>>builder()
+                .type("MESSAGE_STATUS")
+                .action("UPDATE")
+                .data(statusData)
+                .timestamp(LocalDateTime.now())
+                .build();
+
+        Message message = messageRepository.findByMessageId(messageId).orElse(null);
+        if (message != null) {
+            // Send to sender cho real-time feedback
+            messagingTemplate.convertAndSendToUser(
+                    message.getSender().getUsername(),
+                    "/queue/message-status",
+                    response
+            );
+        }
+    }
+
+    private void broadcastReadStatusUpdate(String messageId, Long readerId) {
+        Message message = messageRepository.findByMessageId(messageId).orElse(null);
+        if (message == null) return;
+
+        User reader = userRepository.findById(readerId).orElse(null);
+        if (reader == null) return;
+
+        Map<String, Object> readData = Map.of(
+                "messageId", messageId,
+                "readerId", readerId,
+                "readerName", reader.getFullName(),
+                "timestamp", LocalDateTime.now()
+        );
+
+        WebSocketResponse<Map<String, Object>> response = WebSocketResponse.<Map<String, Object>>builder()
+                .type("MESSAGE_READ")
+                .action("UPDATE")
+                .data(readData)
+                .timestamp(LocalDateTime.now())
+                .build();
+
+        // Send to sender cho read receipts
+        messagingTemplate.convertAndSendToUser(
+                message.getSender().getUsername(),
+                "/queue/read-receipts",
+                response
+        );
     }
 }
