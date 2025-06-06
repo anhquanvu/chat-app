@@ -503,6 +503,9 @@ function openConversation(conversationId, title) {
                     handleMessageStatusUpdate(response.data);
                 }else if (response.type === 'MESSAGE' && (response.action === 'PIN' || response.action === 'UNPIN')) {
                     handleMessagePinUpdate(response.data, response.action);
+                }else if (response.type === 'MESSAGE_READ') {
+                    // NEW: Handle read receipts broadcast to conversation
+                    handleReadReceiptUpdate(response.data);
                 }
             } catch (error) {
                 console.error('Error processing WebSocket message:', error, message.body);
@@ -517,6 +520,19 @@ function openConversation(conversationId, title) {
                 handleMessageStatusUpdate(response.data);
             } catch (error) {
                 console.error('Error processing personal status update:', error);
+            }
+        });
+
+        stompClient.subscribe(`/user/queue/read-receipts`, function (message) {
+            try {
+                const response = JSON.parse(message.body);
+                console.log('Read receipt received:', response);
+
+                if (response.type === 'MESSAGE_READ') {
+                    handleReadReceiptUpdate(response.data);
+                }
+            } catch (error) {
+                console.error('Error processing read receipt:', error);
             }
         });
 
@@ -593,6 +609,52 @@ function openRoom(roomId, title) {
     }, 500);
 }
 
+function handleReadReceiptUpdate(data) {
+    console.log('Processing read receipt:', data);
+
+    if (!data || !data.messageId) {
+        console.warn('Invalid read receipt data:', data);
+        return;
+    }
+
+    const messageElement = document.querySelector(`[data-message-id="${data.messageId}"]`);
+    if (!messageElement) {
+        console.debug('Message element not found for read receipt:', data.messageId);
+        return;
+    }
+
+    // Chỉ cập nhật cho tin nhắn của mình
+    const senderId = messageElement.dataset.senderId;
+    if (senderId !== currentUser.id.toString()) {
+        console.debug('Ignoring read receipt for message not sent by current user');
+        return;
+    }
+
+    const statusIcon = messageElement.querySelector('.status-icon');
+    const statusText = messageElement.querySelector('.status-text');
+
+    if (statusIcon && statusText) {
+        // Cập nhật sang trạng thái "Đã đọc"
+        statusIcon.textContent = '✓✓';
+        statusIcon.className = 'status-icon read';
+
+        // Hiển thị ai đã đọc nếu có thông tin
+        let readText = 'Đã đọc';
+        if (data.readerName) {
+            readText = `Đã đọc bởi ${data.readerName}`;
+        }
+        statusText.textContent = readText;
+
+        // Thêm hiệu ứng visual
+        messageElement.classList.add('status-updated');
+        setTimeout(() => {
+            messageElement.classList.remove('status-updated');
+        }, 1000);
+
+        console.log(`Message ${data.messageId} marked as read by ${data.readerName || 'unknown'}`);
+    }
+}
+
 function leaveCurrentChat() {
     if (!currentChatKey || !stompClient || !connected) return;
 
@@ -612,23 +674,6 @@ function leaveCurrentChat() {
     // Clear typing users
     typingUsers.clear();
     updateTypingIndicator();
-}
-
-function updateMessageReadStatus(messageId) {
-    const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
-    if (!messageElement) return;
-
-    const readers = readReceipts.get(messageId);
-    if (!readers || readers.size === 0) return;
-
-    const statusElement = messageElement.querySelector('.message-footer .message-status');
-    if (statusElement) {
-        const readersList = Array.from(readers).join(', ');
-        statusElement.innerHTML = `
-            <span class="status-icon read">✓✓</span>
-            <span class="status-text">Đã xem bởi ${readersList}</span>
-        `;
-    }
 }
 
 window.addEventListener('beforeunload', function () {
@@ -845,7 +890,6 @@ function createMessageElement(message) {
     return messageElement;
 }
 
-// FIXED: Scroll to bottom function
 function scrollToBottom() {
     const container = document.getElementById('messagesContainer');
     if (container) {

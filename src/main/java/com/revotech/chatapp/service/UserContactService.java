@@ -1,7 +1,6 @@
 package com.revotech.chatapp.service;
 
 import com.revotech.chatapp.model.dto.UserContactDTO;
-import com.revotech.chatapp.model.dto.UserSummaryDTO;
 import com.revotech.chatapp.model.dto.request.AddContactRequest;
 import com.revotech.chatapp.model.dto.response.UserListResponse;
 import com.revotech.chatapp.model.enums.ContactStatus;

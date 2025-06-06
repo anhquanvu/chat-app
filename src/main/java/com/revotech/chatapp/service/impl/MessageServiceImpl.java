@@ -196,7 +196,7 @@ public class MessageServiceImpl implements MessageService {
             throw new AppException("You are not a participant in this conversation");
         }
 
-        // Create message
+        // Create message with SENT status initially
         Message message = Message.builder()
                 .messageId(UUID.randomUUID().toString())
                 .conversation(conversation)
@@ -221,7 +221,7 @@ public class MessageServiceImpl implements MessageService {
         ChatMessage chatMessage = convertMessageToDTO(message);
         broadcastMessage(chatMessage);
 
-        // WhatsApp/Telegram-style delivery & read logic
+        // Enhanced delivery & read logic
         Long recipientId = senderId.equals(conversation.getParticipant1Id())
                 ? conversation.getParticipant2Id()
                 : conversation.getParticipant1Id();
@@ -230,7 +230,7 @@ public class MessageServiceImpl implements MessageService {
         final Long finalRecipientId = recipientId;
         final Long finalMessageEntityId = message.getId();
 
-        // Check recipient status using session tracking (not database)
+        // Check recipient status using session tracking
         boolean recipientHasActiveSessions = userSessionService.getUserSessions(finalRecipientId).size() > 0;
 
         String chatKey = "conversation:" + conversation.getId();
@@ -241,33 +241,34 @@ public class MessageServiceImpl implements MessageService {
                         .filter(Objects::nonNull)
                         .anyMatch(userId -> finalRecipientId.equals(userId));
 
-        log.debug("Message delivery check - Recipient: {}, HasSessions: {}, ActiveInConv: {}",
-                finalRecipientId, recipientHasActiveSessions, recipientActiveInConversation);
-
         if (recipientHasActiveSessions) {
-            // Mark as DELIVERED (WhatsApp double-tick style)
+            // Mark as DELIVERED after short delay
             CompletableFuture.runAsync(() -> {
                 try {
-                    Thread.sleep(300); // Network simulation delay
+                    Thread.sleep(200); // Short delay for delivery
                     messageRepository.findById(finalMessageEntityId).ifPresent(msg -> {
-                        msg.setStatus(MessageStatus.DELIVERED);
-                        messageRepository.save(msg);
-                        broadcastStatusUpdate(messageId, MessageStatus.DELIVERED);
+                        if (msg.getStatus() == MessageStatus.SENT) {
+                            msg.setStatus(MessageStatus.DELIVERED);
+                            messageRepository.save(msg);
+                            broadcastStatusUpdate(messageId, MessageStatus.DELIVERED);
+                        }
                     });
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
             });
 
-            // Mark as READ if recipient active trong conversation (Blue tick style)
+            // Mark as READ if recipient is actively viewing conversation
             if (recipientActiveInConversation) {
                 CompletableFuture.runAsync(() -> {
                     try {
-                        Thread.sleep(1500); // Reading simulation delay
+                        Thread.sleep(1000); // Realistic reading delay
                         messageRepository.findById(finalMessageEntityId).ifPresent(msg -> {
-                            msg.setStatus(MessageStatus.READ);
-                            messageRepository.save(msg);
-                            broadcastReadStatusUpdate(messageId, finalRecipientId);
+                            if (msg.getStatus() != MessageStatus.READ) {
+                                msg.setStatus(MessageStatus.READ);
+                                messageRepository.save(msg);
+                                broadcastReadStatusUpdate(messageId, finalRecipientId);
+                            }
                         });
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
@@ -284,20 +285,29 @@ public class MessageServiceImpl implements MessageService {
         Message message = messageRepository.findByMessageId(request.getMessageId())
                 .orElseThrow(() -> new AppException("Message not found"));
 
+        // Don't mark own messages
         if (message.getSender().getId().equals(userId)) {
-            return; // Don't mark own messages
+            return;
         }
 
+        // Only handle conversation messages (1:1 chat)
         if (message.getConversation() != null) {
-            // 1:1 conversation - update message status
+            // Avoid duplicate updates
+            if (message.getStatus() == MessageStatus.READ) {
+                return;
+            }
+
+            // Update message status
             message.setStatus(MessageStatus.READ);
             messageRepository.save(message);
+
+            // Broadcast read status update
             broadcastReadStatusUpdate(message.getMessageId(), userId);
 
             log.debug("Message {} marked as read by user {} in conversation",
                     request.getMessageId(), userId);
-        } else {
-            // Room message - chỉ update last read timestamp (Discord style)
+        } else if (message.getRoom() != null) {
+            // Room message - only update timestamp (Discord style)
             String roomKey = "room:" + message.getRoom().getId();
             lastReadTimestamps.computeIfAbsent(roomKey, k -> new ConcurrentHashMap<>())
                     .put(userId, LocalDateTime.now());
@@ -309,28 +319,39 @@ public class MessageServiceImpl implements MessageService {
 
     @Override
     public void autoMarkMessagesAsRead(Long roomId, Long conversationId, Long userId) {
-        if (roomId != null) {
-            // Room: chỉ update timestamp
+        if (conversationId != null) {
+            // Get unread messages in conversation
+            List<Message> unreadMessages = messageRepository
+                    .findUnreadMessagesInConversation(conversationId, userId);
+
+            if (!unreadMessages.isEmpty()) {
+                // Batch update for better performance
+                List<String> markedMessageIds = new ArrayList<>();
+
+                for (Message message : unreadMessages) {
+                    if (!message.getSender().getId().equals(userId) &&
+                            message.getStatus() != MessageStatus.READ) {
+
+                        message.setStatus(MessageStatus.READ);
+                        messageRepository.save(message);
+                        markedMessageIds.add(message.getMessageId());
+                    }
+                }
+
+                // Broadcast batch read status update
+                if (!markedMessageIds.isEmpty()) {
+                    broadcastBatchReadStatusUpdate(markedMessageIds, userId);
+                    log.debug("Auto-marked {} messages as read in conversation {}",
+                            markedMessageIds.size(), conversationId);
+                }
+            }
+        } else if (roomId != null) {
+            // Room: only update timestamp
             String roomKey = "room:" + roomId;
             lastReadTimestamps.computeIfAbsent(roomKey, k -> new ConcurrentHashMap<>())
                     .put(userId, LocalDateTime.now());
 
             log.debug("Auto-updated last read timestamp for user {} in room {}", userId, roomId);
-        } else if (conversationId != null) {
-            // 1:1: mark unread messages as read
-            List<Message> unreadMessages = messageRepository
-                    .findUnreadMessagesInConversation(conversationId, userId);
-
-            for (Message message : unreadMessages) {
-                if (!message.getSender().getId().equals(userId)) {
-                    message.setStatus(MessageStatus.READ);
-                    messageRepository.save(message);
-                    broadcastReadStatusUpdate(message.getMessageId(), userId);
-                }
-            }
-
-            log.debug("Auto-marked {} messages as read in conversation {}",
-                    unreadMessages.size(), conversationId);
         }
     }
 
@@ -942,11 +963,39 @@ public class MessageServiceImpl implements MessageService {
                 .build();
     }
 
+    private void broadcastBatchReadStatusUpdate(List<String> messageIds, Long readerId) {
+        User reader = userRepository.findById(readerId).orElse(null);
+        if (reader == null || messageIds.isEmpty()) return;
+
+        Map<String, Object> batchReadData = Map.of(
+                "messageIds", messageIds,
+                "readerId", readerId,
+                "readerName", reader.getFullName(),
+                "timestamp", LocalDateTime.now()
+        );
+
+        WebSocketResponse<Map<String, Object>> response = WebSocketResponse.<Map<String, Object>>builder()
+                .type("MESSAGE_BATCH_READ")
+                .action("UPDATE")
+                .data(batchReadData)
+                .timestamp(LocalDateTime.now())
+                .build();
+
+        // Find the sender of the first message to send notification
+        messageRepository.findByMessageId(messageIds.get(0)).ifPresent(message -> {
+            messagingTemplate.convertAndSendToUser(
+                    message.getSender().getUsername(),
+                    "/queue/read-receipts",
+                    response
+            );
+        });
+    }
+
     // Simplified broadcast methods for 1:1 conversations only
     private void broadcastStatusUpdate(String messageId, MessageStatus status) {
         Map<String, Object> statusData = Map.of(
                 "messageId", messageId,
-                "status", status,
+                "status", status.name(),
                 "timestamp", LocalDateTime.now()
         );
 
@@ -958,8 +1007,8 @@ public class MessageServiceImpl implements MessageService {
                 .build();
 
         Message message = messageRepository.findByMessageId(messageId).orElse(null);
-        if (message != null) {
-            // Send to sender cho real-time feedback
+        if (message != null && message.getSender() != null) {
+            // Send to sender for status feedback
             messagingTemplate.convertAndSendToUser(
                     message.getSender().getUsername(),
                     "/queue/message-status",
@@ -979,7 +1028,8 @@ public class MessageServiceImpl implements MessageService {
                 "messageId", messageId,
                 "readerId", readerId,
                 "readerName", reader.getFullName(),
-                "timestamp", LocalDateTime.now()
+                "timestamp", LocalDateTime.now(),
+                "status", "READ"
         );
 
         WebSocketResponse<Map<String, Object>> response = WebSocketResponse.<Map<String, Object>>builder()
@@ -989,7 +1039,7 @@ public class MessageServiceImpl implements MessageService {
                 .timestamp(LocalDateTime.now())
                 .build();
 
-        // Send to sender cho read receipts
+        // Send to sender for read receipts
         messagingTemplate.convertAndSendToUser(
                 message.getSender().getUsername(),
                 "/queue/read-receipts",

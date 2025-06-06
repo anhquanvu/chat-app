@@ -43,7 +43,6 @@ public class ChatController {
         log.info("Message sent to conversation {}: {}", conversationId, chatMessage.getContent());
     }
 
-    // ENHANCED: Proper enter/leave tracking
     @MessageMapping("/chat/room/{roomId}/enter")
     public void enterRoom(@DestinationVariable Long roomId,
                           SimpMessageHeaderAccessor headerAccessor) {

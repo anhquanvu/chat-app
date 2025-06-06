@@ -3,9 +3,11 @@ package com.revotech.chatapp.controller;
 import com.revotech.chatapp.model.dto.ChatMessage;
 import com.revotech.chatapp.model.dto.MessageReactionDTO;
 import com.revotech.chatapp.model.dto.request.AddReactionRequest;
+import com.revotech.chatapp.model.dto.request.BatchMarkReadRequest;
 import com.revotech.chatapp.model.dto.request.MarkMessageReadRequest;
 import com.revotech.chatapp.security.UserPrincipal;
 import com.revotech.chatapp.service.MessageService;
+import com.revotech.chatapp.util.MessageReadDebouncer;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,6 +26,7 @@ import java.util.Map;
 public class MessageController {
 
     private final MessageService messageService;
+    private final MessageReadDebouncer messageReadDebouncer;
 
     @GetMapping("/{messageId}")
     public ResponseEntity<ChatMessage> getMessage(
@@ -79,7 +82,28 @@ public class MessageController {
     public ResponseEntity<Void> markMessageAsRead(
             @Valid @RequestBody MarkMessageReadRequest request,
             @AuthenticationPrincipal UserPrincipal currentUser) {
-        messageService.markMessageAsRead(request, currentUser.getId());
+
+        // Use debouncer instead of direct call
+        messageReadDebouncer.markMessageAsRead(
+                request.getMessageId(),
+                currentUser.getId(),
+                request.getConversationId()
+        );
+
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/read/batch")
+    public ResponseEntity<Void> batchMarkMessagesAsRead(
+            @RequestBody BatchMarkReadRequest request,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+
+        messageReadDebouncer.batchMarkMessagesAsRead(
+                request.getMessageIds(),
+                currentUser.getId(),
+                request.getConversationId()
+        );
+
         return ResponseEntity.ok().build();
     }
 
