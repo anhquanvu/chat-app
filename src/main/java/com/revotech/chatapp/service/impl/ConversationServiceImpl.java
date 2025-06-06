@@ -312,19 +312,53 @@ public class ConversationServiceImpl implements ConversationService {
         // Get reactions for this message
         List<MessageReactionDTO> reactions = getMessageReactions(message);
 
+        // Xử lý reply message trước
+        ChatMessage replyToMessage = null;
+        String replyToSenderName = null;
+
+        if (message.getReplyTo() != null) {
+            Message replyMsg = message.getReplyTo();
+            replyToMessage = ChatMessage.builder()
+                    .id(replyMsg.getMessageId())
+                    .content(replyMsg.getContent())
+                    .senderName(replyMsg.getSender().getFullName())
+                    .senderUsername(replyMsg.getSender().getUsername())
+                    .timestamp(replyMsg.getCreatedAt())
+                    .build();
+
+            replyToSenderName = replyMsg.getSender().getFullName();
+        }
+
+        // Get pinned by user info if message is pinned
+        String pinnedByUsername = null;
+        if (message.getIsPinned() && message.getPinnedBy() != null) {
+            User pinnedByUser = userRepository.findById(message.getPinnedBy()).orElse(null);
+            if (pinnedByUser != null) {
+                pinnedByUsername = pinnedByUser.getUsername();
+            }
+        }
+
+        // Tạo ChatMessage object với đầy đủ thông tin
         ChatMessage chatMessage = ChatMessage.builder()
                 .id(message.getMessageId())
                 .content(message.getContent())
                 .senderId(message.getSender().getId())
                 .senderName(message.getSender().getFullName())
                 .senderUsername(message.getSender().getUsername())
+                .senderAvatar(message.getSender().getAvatarUrl())
                 .type(message.getType())
                 .status(message.getStatus())
                 .timestamp(message.getCreatedAt())
+                .roomId(message.getRoom() != null ? message.getRoom().getId() : null)
+                .conversationId(message.getConversation() != null ? message.getConversation().getId() : null)
+                .replyToId(message.getReplyTo() != null ? message.getReplyTo().getMessageId() : null)
+                .replyToMessage(replyToMessage)
+                .replyToSenderName(replyToSenderName)
                 .isEdited(message.getIsEdited())
                 .editedAt(message.getEditedAt())
-                .conversationId(message.getConversation() != null ? message.getConversation().getId() : null)
-                .roomId(message.getRoom() != null ? message.getRoom().getId() : null)
+                .isPinned(message.getIsPinned())
+                .pinnedAt(message.getPinnedAt())
+                .pinnedByUsername(pinnedByUsername)
                 .build();
 
         // Set reactions

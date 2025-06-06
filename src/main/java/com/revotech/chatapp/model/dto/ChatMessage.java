@@ -30,6 +30,8 @@ public class ChatMessage {
     private LocalDateTime pinnedAt;
     private String pinnedByUsername;
     private FileMessage fileAttachment;
+    private ChatMessage replyToMessage;
+    private String replyToSenderName;
 
     private List<MessageReactionDTO> reactions;
 }

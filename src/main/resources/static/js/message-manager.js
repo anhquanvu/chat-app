@@ -1,7 +1,32 @@
-// Message Manager
+// Enhanced Message Manager with Reply Feature
 class MessageManager {
     constructor() {
         this.currentMessageForReaction = null;
+        this.replyingToMessage = null;
+        this.setupReplyUI();
+    }
+
+    setupReplyUI() {
+        // Create reply container if not exists
+        const messageInputContainer = document.querySelector('.message-input-container');
+        if (messageInputContainer && !document.getElementById('replyContainer')) {
+            const replyContainer = document.createElement('div');
+            replyContainer.id = 'replyContainer';
+            replyContainer.className = 'reply-container hidden';
+            replyContainer.innerHTML = `
+                <div class="reply-preview">
+                    <div class="reply-line"></div>
+                    <div class="reply-content">
+                        <div class="reply-header">
+                            <span class="reply-sender"></span>
+                            <button class="reply-close" onclick="messageManager.cancelReply()">×</button>
+                        </div>
+                        <div class="reply-text"></div>
+                    </div>
+                </div>
+            `;
+            messageInputContainer.insertBefore(replyContainer, messageInputContainer.firstChild);
+        }
     }
 
     displayMessages(messages, appendToTop = false) {
@@ -16,7 +41,7 @@ class MessageManager {
         const sortedMessages = messages.slice().reverse();
 
         for (const message of sortedMessages) {
-            this.showMessage(message, false); // Don't scroll for each message
+            this.showMessage(message, false);
         }
 
         if (!appendToTop) {
@@ -28,28 +53,22 @@ class MessageManager {
         const wrapper = document.getElementById('messagesWrapper');
         const typingIndicator = document.getElementById('typingIndicator');
 
-        // Check if message already exists
         const existingMessage = wrapper.querySelector(`[data-message-id="${message.id}"]`);
         if (existingMessage) {
             return;
         }
 
         const messageElement = this.createMessageElement(message);
-
-        // Insert before typing indicator
         wrapper.insertBefore(messageElement, typingIndicator);
 
-        // Observer for visibility tracking
         if (window.messageVisibilityTracker) {
             window.messageVisibilityTracker.observeNewMessage(messageElement);
         }
 
-        // Auto scroll for new messages
         if (shouldScroll) {
             const container = document.getElementById('messagesContainer');
             const isAtBottom = container.scrollHeight - container.clientHeight <= container.scrollTop + 100;
 
-            // Only scroll if user is near bottom or it's their own message
             if (isAtBottom || (window.currentUser && message.senderId === window.currentUser.id)) {
                 requestAnimationFrame(() => {
                     container.scrollTop = container.scrollHeight;
@@ -57,7 +76,6 @@ class MessageManager {
             }
         }
 
-        // Mark message as read if not own message
         if (window.currentUser && message.senderId !== window.currentUser.id && window.chatManager) {
             const chatInfo = window.chatManager.getCurrentChatInfo();
             if (chatInfo.type && chatInfo.id) {
@@ -87,12 +105,16 @@ class MessageManager {
             const statusIcon = this.getStatusIcon(message.status);
             const reactions = message.reactions || [];
 
+            // Reply content if this message is replying to another
+            const replyContent = message.replyToId ? this.createReplyContent(message, message.replyToMessage) : '';
+
             messageElement.innerHTML = `
                 ${!isOwnMessage ? `<div class="message-header">
                     <span class="message-sender">${message.senderName}</span>
                     <span class="message-time">${timestamp}</span>
                 </div>` : ''}
                 ${message.isPinned ? `<div class="message-pinned-indicator">📌 Tin nhắn đã được ghim${message.pinnedByUsername ? ` bởi ${message.pinnedByUsername}` : ''}</div>` : ''}
+                ${replyContent}
                 <div class="message-content">${message.content}</div>
                 <div class="message-reactions" id="reactions-${messageId}">
                     ${this.renderReactions(reactions, messageId)}
@@ -100,6 +122,9 @@ class MessageManager {
                 </div>
                 <div class="message-footer">
                     <div class="message-actions">
+                        <button class="reply-btn" onclick="messageManager.startReply('${messageId}', '${message.senderName}', \`${message.content.replace(/`/g, '\\`').replace(/"/g, '\\"')}\`)" title="Trả lời">
+                            ↩️
+                        </button>
                         ${this.canPinMessage() ? `<button class="pin-btn" onclick="window.togglePinMessage && togglePinMessage('${messageId}', ${!message.isPinned})" title="${message.isPinned ? 'Bỏ ghim' : 'Ghim tin nhắn'}">
                             ${message.isPinned ? '📌' : '📍'}
                         </button>` : ''}
@@ -122,6 +147,75 @@ class MessageManager {
         messageElement.dataset.senderId = message.senderId;
 
         return messageElement;
+    }
+
+    createReplyContent(message, replyToMessage) {
+        if (!replyToMessage) {
+            return `
+            <div class="message-reply-indicator">
+                <span class="reply-arrow">↩</span>
+                <span class="reply-text">Bạn đã trả lời ${message.replyToSenderName || 'tin nhắn'}</span>
+            </div>
+        `;
+        }
+
+        return `
+        <div class="message-reply-indicator">
+            <span class="reply-arrow">↩</span>
+            <span class="reply-text">Bạn đã trả lời ${replyToMessage.senderName}</span>
+        </div>
+        <div class="message-reply-content">
+            <div class="reply-line"></div>
+            <div class="reply-info">
+                <div class="reply-sender">${replyToMessage.senderName}</div>
+                <div class="reply-content-preview">${replyToMessage.content.length > 50 ? replyToMessage.content.substring(0, 50) + '...' : replyToMessage.content}</div>
+            </div>
+        </div>
+    `;
+    }
+
+    startReply(messageId, senderName, content) {
+        this.replyingToMessage = {
+            id: messageId,
+            senderName: senderName,
+            content: content
+        };
+
+        const replyContainer = document.getElementById('replyContainer');
+        const replySender = replyContainer.querySelector('.reply-sender');
+        const replyText = replyContainer.querySelector('.reply-text');
+
+        replySender.textContent = `Trả lời ${senderName}`;
+        replyText.textContent = content.length > 100 ? content.substring(0, 100) + '...' : content;
+
+        replyContainer.classList.remove('hidden');
+
+        // Focus message input
+        const messageInput = document.getElementById('messageInput');
+        messageInput.focus();
+
+        // Scroll to reply container
+        replyContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    cancelReply() {
+        this.replyingToMessage = null;
+        const replyContainer = document.getElementById('replyContainer');
+        replyContainer.classList.add('hidden');
+    }
+
+    // Override sendMessage to include reply data
+    createMessageObject(content, type = 'CHAT') {
+        const messageObj = {
+            content: content,
+            type: type
+        };
+
+        if (this.replyingToMessage) {
+            messageObj.replyToId = this.replyingToMessage.id;
+        }
+
+        return messageObj;
     }
 
     renderReactions(reactions, messageId) {
@@ -161,7 +255,6 @@ class MessageManager {
     }
 
     canPinMessage() {
-        // Simplified permission check - can be enhanced later
         return true;
     }
 
@@ -208,7 +301,6 @@ class MessageManager {
                 });
 
                 if (response.ok) {
-                    // Message will be updated via WebSocket
                     console.log('Message edited successfully');
                 } else {
                     const error = await response.text();
@@ -329,13 +421,11 @@ class MessageManager {
     updateMessage(message) {
         const messageElement = document.querySelector(`[data-message-id="${message.id}"]`);
         if (messageElement) {
-            // Update message content
             const contentElement = messageElement.querySelector('.message-content');
             if (contentElement) {
                 contentElement.textContent = message.content;
             }
 
-            // Add edited indicator
             if (message.isEdited) {
                 let editedIndicator = messageElement.querySelector('.edited-indicator');
                 if (!editedIndicator) {
@@ -377,7 +467,6 @@ class MessageManager {
             return;
         }
 
-        // Only update for current user's messages
         if (window.currentUser) {
             const senderId = messageElement.dataset.senderId;
             if (senderId !== window.currentUser.id.toString()) {
@@ -390,20 +479,17 @@ class MessageManager {
         const statusText = messageElement.querySelector('.status-text');
 
         if (statusIcon && statusText) {
-            // Update icon and class
             statusIcon.textContent = this.getStatusIcon(status);
             statusIcon.className = `status-icon ${status.toLowerCase()}`;
 
-            // Update text with reader info
             let statusTextContent = this.getStatusText(status);
-            if (status === 'READ' || status === 'READ'.toUpperCase()) {
+            if (status === 'read' || status === 'read'.toUpperCase()) {
                 if (readerName) {
                     statusTextContent = `Đã đọc bởi ${readerName}`;
                 }
             }
             statusText.textContent = statusTextContent;
 
-            // Add visual effect
             messageElement.classList.add('status-updated');
             setTimeout(() => {
                 messageElement.classList.remove('status-updated');
@@ -427,7 +513,6 @@ class MessageManager {
             return;
         }
 
-        // Only update for current user's messages
         if (window.currentUser) {
             const senderId = messageElement.dataset.senderId;
             if (senderId !== window.currentUser.id.toString()) {
@@ -440,18 +525,15 @@ class MessageManager {
         const statusText = messageElement.querySelector('.status-text');
 
         if (statusIcon && statusText) {
-            // Update to read status
             statusIcon.textContent = '✓✓';
             statusIcon.className = 'status-icon read';
 
-            // Display who read it
             let readText = 'Đã đọc';
             if (data.readerName) {
                 readText = `Đã đọc bởi ${data.readerName}`;
             }
             statusText.textContent = readText;
 
-            // Add visual effect
             messageElement.classList.add('status-updated');
             setTimeout(() => {
                 messageElement.classList.remove('status-updated');

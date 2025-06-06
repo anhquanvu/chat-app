@@ -418,6 +418,23 @@ public class RoomServiceImpl implements RoomService {
     }
 
     private ChatMessage convertMessageToDTO(com.revotech.chatapp.model.entity.Message message) {
+        // Xử lý reply message trước
+        ChatMessage replyToMessage = null;
+        String replyToSenderName = null;
+
+        if (message.getReplyTo() != null) {
+            Message replyMsg = message.getReplyTo();
+            replyToMessage = ChatMessage.builder()
+                    .id(replyMsg.getMessageId())
+                    .content(replyMsg.getContent())
+                    .senderName(replyMsg.getSender().getFullName())
+                    .senderUsername(replyMsg.getSender().getUsername())
+                    .timestamp(replyMsg.getCreatedAt())
+                    .build();
+
+            replyToSenderName = replyMsg.getSender().getFullName();
+        }
+
         // Get pinned by user info if message is pinned
         String pinnedByUsername = null;
         if (message.getIsPinned() && message.getPinnedBy() != null) {
@@ -439,6 +456,9 @@ public class RoomServiceImpl implements RoomService {
                 .timestamp(message.getCreatedAt())
                 .roomId(message.getRoom() != null ? message.getRoom().getId() : null)
                 .conversationId(message.getConversation() != null ? message.getConversation().getId() : null)
+                .replyToId(message.getReplyTo() != null ? message.getReplyTo().getMessageId() : null)
+                .replyToMessage(replyToMessage)
+                .replyToSenderName(replyToSenderName)
                 .isEdited(message.getIsEdited())
                 .editedAt(message.getEditedAt())
                 .isPinned(message.getIsPinned())
