@@ -484,57 +484,85 @@ function openConversation(conversationId, title) {
 
     // Subscribe to conversation messages
     if (stompClient && connected) {
+        // Main conversation subscription
         stompClient.subscribe(`/topic/conversation/${conversationId}`, function (message) {
             try {
                 const response = JSON.parse(message.body);
                 console.log('Conversation message received:', response);
 
-                if (response.type === 'MESSAGE' && response.action === 'SEND') {
-                    showMessage(response.data);
-                } else if (response.type === 'TYPING') {
-                    handleTypingNotification(response);
-                } else if (response.type === 'REACTION') {
-                    handleReactionUpdate(response.data);
-                } else if (response.type === 'MESSAGE' && response.action === 'UPDATE') {
-                    updateMessage(response.data);
-                } else if (response.type === 'MESSAGE' && response.action === 'DELETE') {
-                    removeMessage(response.data);
-                } else if (response.type === 'MESSAGE_STATUS') {
-                    handleMessageStatusUpdate(response.data);
-                }else if (response.type === 'MESSAGE' && (response.action === 'PIN' || response.action === 'UNPIN')) {
-                    handleMessagePinUpdate(response.data, response.action);
-                }else if (response.type === 'MESSAGE_READ') {
-                    // NEW: Handle read receipts broadcast to conversation
-                    handleReadReceiptUpdate(response.data);
+                switch (response.type) {
+                    case 'MESSAGE':
+                        if (response.action === 'SEND') {
+                            showMessage(response.data);
+                        } else if (response.action === 'UPDATE') {
+                            updateMessage(response.data);
+                        } else if (response.action === 'DELETE') {
+                            removeMessage(response.data);
+                        } else if (response.action === 'PIN' || response.action === 'UNPIN') {
+                            handleMessagePinUpdate(response.data, response.action);
+                        }
+                        break;
+                    case 'TYPING':
+                        handleTypingNotification(response);
+                        break;
+                    case 'REACTION':
+                        handleReactionUpdate(response.data);
+                        break;
+                    case 'MESSAGE_STATUS':
+                        handleMessageStatusUpdate(response.data);
+                        break;
+                    case 'MESSAGE_READ':
+                        handleReadReceiptUpdate(response.data);
+                        break;
+                    case 'MESSAGE_BATCH_READ':
+                        handleBatchReadReceiptUpdate(response.data);
+                        break;
                 }
             } catch (error) {
-                console.error('Error processing WebSocket message:', error, message.body);
+                console.error('Error processing conversation WebSocket message:', error, message.body);
             }
         });
 
-        // FIXED: Subscribe to personal message status updates
-        stompClient.subscribe(`/user/queue/message-status`, function (message) {
+        // Personal message status subscription (for own messages)
+        const messageStatusSub = stompClient.subscribe(`/user/queue/message-status`, function (message) {
             try {
                 const response = JSON.parse(message.body);
                 console.log('Personal message status received:', response);
-                handleMessageStatusUpdate(response.data);
+
+                if (response.type === 'MESSAGE_STATUS') {
+                    handleMessageStatusUpdate(response.data);
+                }
             } catch (error) {
-                console.error('Error processing personal status update:', error);
+                console.error('Error processing personal message status:', error);
             }
         });
 
-        stompClient.subscribe(`/user/queue/read-receipts`, function (message) {
+        // Read receipts subscription (when others read my messages)
+        const readReceiptSub = stompClient.subscribe(`/user/queue/read-receipts`, function (message) {
             try {
                 const response = JSON.parse(message.body);
                 console.log('Read receipt received:', response);
 
-                if (response.type === 'MESSAGE_READ') {
-                    handleReadReceiptUpdate(response.data);
+                switch (response.type) {
+                    case 'MESSAGE_READ':
+                        handleReadReceiptUpdate(response.data);
+                        break;
+                    case 'MESSAGE_BATCH_READ':
+                        handleBatchReadReceiptUpdate(response.data);
+                        break;
+                    default:
+                        console.log('Unknown read receipt type:', response.type);
                 }
             } catch (error) {
                 console.error('Error processing read receipt:', error);
             }
         });
+
+        // Store subscriptions for cleanup
+        if (!window.activeSubscriptions) {
+            window.activeSubscriptions = [];
+        }
+        window.activeSubscriptions.push(messageStatusSub, readReceiptSub);
 
         // Send enter chat notification
         stompClient.send(`/app/chat/conversation/${conversationId}/enter`, {}, JSON.stringify({}));
@@ -623,7 +651,7 @@ function handleReadReceiptUpdate(data) {
         return;
     }
 
-    // Chỉ cập nhật cho tin nhắn của mình
+    // Chỉ cập nhật cho tin nhắn của current user
     const senderId = messageElement.dataset.senderId;
     if (senderId !== currentUser.id.toString()) {
         console.debug('Ignoring read receipt for message not sent by current user');
@@ -638,7 +666,7 @@ function handleReadReceiptUpdate(data) {
         statusIcon.textContent = '✓✓';
         statusIcon.className = 'status-icon read';
 
-        // Hiển thị ai đã đọc nếu có thông tin
+        // Hiển thị ai đã đọc
         let readText = 'Đã đọc';
         if (data.readerName) {
             readText = `Đã đọc bởi ${data.readerName}`;
@@ -651,14 +679,94 @@ function handleReadReceiptUpdate(data) {
             messageElement.classList.remove('status-updated');
         }, 1000);
 
-        console.log(`Message ${data.messageId} marked as read by ${data.readerName || 'unknown'}`);
+        console.log(`✅ Message ${data.messageId} marked as read by ${data.readerName || 'unknown'}`);
+    } else {
+        console.warn('Status elements not found in message:', data.messageId);
     }
 }
+
+function handleBatchReadReceiptUpdate(data) {
+    console.log('Processing batch read receipt:', data);
+
+    if (!data || !data.messageIds || !Array.isArray(data.messageIds)) {
+        console.warn('Invalid batch read receipt data:', data);
+        return;
+    }
+
+    let updatedCount = 0;
+    data.messageIds.forEach(messageId => {
+        const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
+        if (messageElement && messageElement.dataset.senderId === currentUser.id.toString()) {
+            handleReadReceiptUpdate({
+                messageId: messageId,
+                readerId: data.readerId,
+                readerName: data.readerName,
+                timestamp: data.timestamp
+            });
+            updatedCount++;
+        }
+    });
+
+    if (updatedCount > 0) {
+        console.log(`✅ Batch updated ${updatedCount} messages as read by ${data.readerName || 'unknown'}`);
+    }
+}
+
+function updateMessageStatus(messageId, status, readerName, readerId) {
+    const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
+    if (!messageElement) {
+        console.debug('Message element not found for status update:', messageId);
+        return;
+    }
+
+    // Chỉ cập nhật cho tin nhắn của current user
+    const senderId = messageElement.dataset.senderId;
+    if (senderId !== currentUser.id.toString()) {
+        console.debug('Ignoring status update for message not sent by current user');
+        return;
+    }
+
+    const statusIcon = messageElement.querySelector('.status-icon');
+    const statusText = messageElement.querySelector('.status-text');
+
+    if (statusIcon && statusText) {
+        // Cập nhật icon và class
+        statusIcon.textContent = getStatusIcon(status);
+        statusIcon.className = `status-icon ${status.toLowerCase()}`;
+
+        // Cập nhật text với thông tin người đọc
+        let statusTextContent = getStatusText(status);
+        if (status === 'READ' && readerName) {
+            statusTextContent = `Đã đọc bởi ${readerName}`;
+        }
+        statusText.textContent = statusTextContent;
+
+        // Thêm hiệu ứng visual
+        messageElement.classList.add('status-updated');
+        setTimeout(() => {
+            messageElement.classList.remove('status-updated');
+        }, 1000);
+
+        console.log(`Message ${messageId} status updated to ${status}${readerName ? ` by ${readerName}` : ''}`);
+    }
+}
+
+
 
 function leaveCurrentChat() {
     if (!currentChatKey || !stompClient || !connected) return;
 
     console.log('Leaving current chat:', currentChatKey);
+
+    // Cleanup subscriptions
+    if (window.activeSubscriptions) {
+        window.activeSubscriptions.forEach(sub => {
+            if (sub && sub.unsubscribe) {
+                sub.unsubscribe();
+            }
+        });
+        window.activeSubscriptions = [];
+    }
 
     if (currentChatType === 'room' && currentChatId) {
         stompClient.send(`/app/chat/room/${currentChatId}/leave`, {}, JSON.stringify({}));
@@ -687,33 +795,7 @@ function handleMessageStatusUpdate(data) {
     console.log('Message status update received:', data);
 
     if (data && data.messageId && data.status) {
-        const messageElement = document.querySelector(`[data-message-id="${data.messageId}"]`);
-        if (messageElement) {
-            const statusIcon = messageElement.querySelector('.status-icon');
-            const statusText = messageElement.querySelector('.status-text');
-
-            if (statusIcon) {
-                statusIcon.textContent = getStatusIcon(data.status);
-                statusIcon.className = `status-icon ${data.status.toLowerCase()}`;
-            }
-
-            if (statusText) {
-                let statusTextContent = getStatusText(data.status);
-
-                // FIXED: Show who read the message if provided
-                if (data.readBy && data.status === 'READ') {
-                    statusTextContent = `Đã xem bởi ${data.readBy}`;
-                }
-
-                statusText.textContent = statusTextContent;
-            }
-
-            // FIXED: Add visual feedback for status change
-            messageElement.classList.add('status-updated');
-            setTimeout(() => {
-                messageElement.classList.remove('status-updated');
-            }, 1000);
-        }
+        updateMessageStatus(data.messageId, data.status, data.readBy, data.readerId);
     }
 }
 

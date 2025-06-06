@@ -282,6 +282,10 @@ public class MessageServiceImpl implements MessageService {
 
     @Override
     public void markMessageAsRead(MarkMessageReadRequest request, Long userId) {
+
+        log.info("Processing mark as read: messageId={}, userId={}",
+                request.getMessageId(), userId);
+
         Message message = messageRepository.findByMessageId(request.getMessageId())
                 .orElseThrow(() -> new AppException("Message not found"));
 
@@ -301,19 +305,11 @@ public class MessageServiceImpl implements MessageService {
             message.setStatus(MessageStatus.READ);
             messageRepository.save(message);
 
-            // Broadcast read status update
+            log.info("Message status updated to READ, broadcasting receipt");
+            // CRITICAL FIX: Ensure read receipt is broadcasted
             broadcastReadStatusUpdate(message.getMessageId(), userId);
 
-            log.debug("Message {} marked as read by user {} in conversation",
-                    request.getMessageId(), userId);
-        } else if (message.getRoom() != null) {
-            // Room message - only update timestamp (Discord style)
-            String roomKey = "room:" + message.getRoom().getId();
-            lastReadTimestamps.computeIfAbsent(roomKey, k -> new ConcurrentHashMap<>())
-                    .put(userId, LocalDateTime.now());
-
-            log.debug("Updated last read timestamp for user {} in room {}",
-                    userId, message.getRoom().getId());
+            log.info("Read receipt broadcast completed for message {}", request.getMessageId());
         }
     }
 
@@ -1019,10 +1015,16 @@ public class MessageServiceImpl implements MessageService {
 
     private void broadcastReadStatusUpdate(String messageId, Long readerId) {
         Message message = messageRepository.findByMessageId(messageId).orElse(null);
-        if (message == null) return;
+        if (message == null) {
+            log.warn("Cannot find message {} for read receipt broadcast", messageId);
+            return;
+        }
 
         User reader = userRepository.findById(readerId).orElse(null);
-        if (reader == null) return;
+        if (reader == null) {
+            log.warn("Cannot find reader {} for read receipt broadcast", readerId);
+            return;
+        }
 
         Map<String, Object> readData = Map.of(
                 "messageId", messageId,
@@ -1039,9 +1041,15 @@ public class MessageServiceImpl implements MessageService {
                 .timestamp(LocalDateTime.now())
                 .build();
 
-        // Send to sender for read receipts
+        // Send to message sender
+        String senderUsername = message.getSender().getUsername();
+        String destination = "/user/" + senderUsername + "/queue/read-receipts";
+
+        log.info("Broadcasting read receipt to {}: message {} read by {}",
+                destination, messageId, reader.getFullName());
+
         messagingTemplate.convertAndSendToUser(
-                message.getSender().getUsername(),
+                senderUsername,
                 "/queue/read-receipts",
                 response
         );
