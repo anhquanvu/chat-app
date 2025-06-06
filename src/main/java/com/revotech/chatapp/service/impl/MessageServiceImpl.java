@@ -61,8 +61,13 @@ public class MessageServiceImpl implements MessageService {
                 .add(sessionId);
         sessionToUser.put(sessionId, userId);
 
-        // Auto mark existing unread messages as read
-        autoMarkMessagesAsRead(roomId, conversationId, userId);
+        // FIXED: Auto mark existing unread messages as read with immediate broadcast
+        CompletableFuture.runAsync(() -> {
+            autoMarkMessagesAsRead(roomId, conversationId, userId);
+
+            // FIXED: Also mark recent messages as delivered for this user
+            autoMarkMessagesAsDelivered(roomId, conversationId, userId);
+        });
 
         log.debug("User {} entered chat {} with session {}", userId, chatKey, sessionId);
     }
@@ -90,11 +95,6 @@ public class MessageServiceImpl implements MessageService {
 
         if (message == null) return;
 
-        String chatKey = buildChatKey(
-                message.getRoom() != null ? message.getRoom().getId() : null,
-                message.getConversation() != null ? message.getConversation().getId() : null
-        );
-
         Set<Long> activeUsers = getActiveUsersInChat(
                 message.getRoom() != null ? message.getRoom().getId() : null,
                 message.getConversation() != null ? message.getConversation().getId() : null
@@ -103,10 +103,17 @@ public class MessageServiceImpl implements MessageService {
         // Mark as read for all active users (except sender)
         for (Long userId : activeUsers) {
             if (!userId.equals(message.getSender().getId())) {
-                markSingleMessageAsRead(message, userRepository.findById(userId).orElse(null));
-                broadcastReadStatusUpdate(messageId, userId);
+                User user = userRepository.findById(userId).orElse(null);
+                if (user != null) {
+                    markSingleMessageAsRead(message, user);
+                    // FIXED: Broadcast read status immediately
+                    broadcastReadStatusUpdate(messageId, userId);
+                }
             }
         }
+
+        // FIXED: Update overall message status after all reads
+        updateMessageOverallStatus(message);
     }
 
     @Override
@@ -206,13 +213,15 @@ public class MessageServiceImpl implements MessageService {
 
         ChatMessage chatMessage = convertMessageToDTO(message);
 
-        // Broadcast message
+        // Broadcast message first
         broadcastMessage(chatMessage);
 
-        final String messageId = message.getMessageId(); // Make effectively final
+        // FIXED: Immediate auto-mark for active users
+        final String messageId = message.getMessageId();
         CompletableFuture.runAsync(() -> {
             try {
-                Thread.sleep(1000); // Give time for message to be displayed
+                // Small delay to ensure message is displayed first
+                Thread.sleep(500);
                 autoMarkMessagesAsReadForActiveUsers(messageId);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -263,8 +272,19 @@ public class MessageServiceImpl implements MessageService {
 
         ChatMessage chatMessage = convertMessageToDTO(message);
 
-        // Broadcast message
+        // Broadcast message first
         broadcastMessage(chatMessage);
+
+        // FIXED: Immediate auto-mark for active users in conversation
+        final String messageId = message.getMessageId();
+        CompletableFuture.runAsync(() -> {
+            try {
+                Thread.sleep(500);
+                autoMarkMessagesAsReadForActiveUsers(messageId);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
 
         return chatMessage;
     }
@@ -676,10 +696,18 @@ public class MessageServiceImpl implements MessageService {
         return messages.map(this::convertMessageToDTO);
     }
 
-    // Helper methods
     private ChatMessage convertMessageToDTO(Message message) {
-        // Get reactions for this message
+
         List<MessageReactionDTO> reactions = getMessageReactions(message.getMessageId());
+
+        // Get pinned by user info if message is pinned
+        String pinnedByUsername = null;
+        if (message.getIsPinned() && message.getPinnedBy() != null) {
+            User pinnedByUser = userRepository.findById(message.getPinnedBy()).orElse(null);
+            if (pinnedByUser != null) {
+                pinnedByUsername = pinnedByUser.getUsername();
+            }
+        }
 
         ChatMessage chatMessage = ChatMessage.builder()
                 .id(message.getMessageId())
@@ -693,12 +721,13 @@ public class MessageServiceImpl implements MessageService {
                 .timestamp(message.getCreatedAt())
                 .roomId(message.getRoom() != null ? message.getRoom().getId() : null)
                 .conversationId(message.getConversation() != null ? message.getConversation().getId() : null)
-                .replyToId(message.getReplyTo() != null ? message.getReplyTo().getMessageId() : null)
                 .isEdited(message.getIsEdited())
                 .editedAt(message.getEditedAt())
+                .isPinned(message.getIsPinned())
+                .pinnedAt(message.getPinnedAt())
+                .pinnedByUsername(pinnedByUsername)
                 .build();
 
-        // Set reactions - THÊM DÒNG NÀY
         chatMessage.setReactions(reactions);
 
         return chatMessage;
@@ -787,6 +816,9 @@ public class MessageServiceImpl implements MessageService {
                 delivery.setStatus(DeliveryStatus.READ);
                 delivery.setReadAt(LocalDateTime.now());
                 messageDeliveryRepository.save(delivery);
+
+                // FIXED: Broadcast status update immediately after saving
+                broadcastMessageStatusUpdate(message, user, DeliveryStatus.READ);
             }
         } else {
             MessageDelivery delivery = MessageDelivery.builder()
@@ -796,10 +828,10 @@ public class MessageServiceImpl implements MessageService {
                     .readAt(LocalDateTime.now())
                     .build();
             messageDeliveryRepository.save(delivery);
-        }
 
-        // Update message overall status
-        updateMessageOverallStatus(message);
+            // FIXED: Broadcast status update for new delivery
+            broadcastMessageStatusUpdate(message, user, DeliveryStatus.READ);
+        }
     }
 
     private void markSingleMessageAsDelivered(Message message, User user) {
@@ -870,30 +902,249 @@ public class MessageServiceImpl implements MessageService {
     }
 
     private void updateMessageOverallStatus(Message message) {
-        // Count total recipients (room members or conversation participants)
-        long totalRecipients = 0;
-        long readCount = 0;
-
-        if (message.getRoom() != null) {
-            totalRecipients = roomMemberRepository.countActiveMembers(message.getRoom().getId()) - 1; // Exclude sender
-            readCount = messageDeliveryRepository.countByMessageAndStatus(message, DeliveryStatus.READ);
-        } else if (message.getConversation() != null) {
-            totalRecipients = 1; // Direct conversation = 1 other participant
-            readCount = messageDeliveryRepository.countByMessageAndStatus(message, DeliveryStatus.READ);
-        }
-
-        MessageStatus newStatus = message.getStatus();
-        if (readCount == totalRecipients && totalRecipients > 0) {
-            newStatus = MessageStatus.READ;
-        } else if (readCount > 0) {
-            newStatus = MessageStatus.DELIVERED;
-        }
+        MessageStatus newStatus = determineOverallMessageStatus(message);
 
         if (newStatus != message.getStatus()) {
             message.setStatus(newStatus);
             messageRepository.save(message);
-            broadcastStatusUpdate(message, newStatus);
+
+            // FIXED: Broadcast the updated message status
+            Map<String, Object> statusData = new HashMap<>();
+            statusData.put("messageId", message.getMessageId());
+            statusData.put("status", newStatus);
+            statusData.put("timestamp", LocalDateTime.now());
+
+            WebSocketResponse<Map<String, Object>> response = WebSocketResponse.<Map<String, Object>>builder()
+                    .type("MESSAGE_STATUS")
+                    .action("UPDATE")
+                    .data(statusData)
+                    .timestamp(LocalDateTime.now())
+                    .build();
+
+            String destination = message.getRoom() != null ?
+                    "/topic/room/" + message.getRoom().getId() :
+                    "/topic/conversation/" + message.getConversation().getId();
+
+            messagingTemplate.convertAndSend(destination, response);
+
+            // Send to sender specifically
+            messagingTemplate.convertAndSendToUser(
+                    message.getSender().getUsername(),
+                    "/queue/message-status",
+                    response
+            );
         }
     }
 
+    private void broadcastMessageStatusUpdate(Message message, User reader, DeliveryStatus status) {
+        // Create status update for sender
+        Map<String, Object> statusData = new HashMap<>();
+        statusData.put("messageId", message.getMessageId());
+        statusData.put("status", determineOverallMessageStatus(message));
+        statusData.put("readBy", reader.getFullName());
+        statusData.put("timestamp", LocalDateTime.now());
+
+        WebSocketResponse<Map<String, Object>> response = WebSocketResponse.<Map<String, Object>>builder()
+                .type("MESSAGE_STATUS")
+                .action("UPDATE")
+                .data(statusData)
+                .timestamp(LocalDateTime.now())
+                .build();
+
+        // Send to message sender specifically
+        messagingTemplate.convertAndSendToUser(
+                message.getSender().getUsername(),
+                "/queue/message-status",
+                response
+        );
+
+        // Also send to the chat channel
+        String destination = message.getRoom() != null ?
+                "/topic/room/" + message.getRoom().getId() :
+                "/topic/conversation/" + message.getConversation().getId();
+
+        messagingTemplate.convertAndSend(destination, response);
+
+        log.debug("Message status update sent: {} read by {}", message.getMessageId(), reader.getFullName());
+    }
+
+    private MessageStatus determineOverallMessageStatus(Message message) {
+        long totalRecipients = 0;
+        long readCount = 0;
+        long deliveredCount = 0;
+
+        if (message.getRoom() != null) {
+            totalRecipients = roomMemberRepository.countActiveMembers(message.getRoom().getId()) - 1; // Exclude sender
+            readCount = messageDeliveryRepository.countByMessageAndStatus(message, DeliveryStatus.READ);
+            deliveredCount = messageDeliveryRepository.countByMessageAndStatus(message, DeliveryStatus.DELIVERED);
+        } else if (message.getConversation() != null) {
+            totalRecipients = 1; // Direct conversation = 1 other participant
+            readCount = messageDeliveryRepository.countByMessageAndStatus(message, DeliveryStatus.READ);
+            deliveredCount = messageDeliveryRepository.countByMessageAndStatus(message, DeliveryStatus.DELIVERED);
+        }
+
+        if (readCount == totalRecipients && totalRecipients > 0) {
+            return MessageStatus.READ;
+        } else if (deliveredCount >= totalRecipients && totalRecipients > 0) {
+            return MessageStatus.DELIVERED;
+        } else {
+            return MessageStatus.SENT;
+        }
+    }
+
+    @Override
+    public void pinMessage(String messageId, Boolean pinned, Long userId) {
+        Message message = messageRepository.findByMessageId(messageId)
+                .orElseThrow(() -> new AppException("Message not found"));
+
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new AppException("User not found"));
+
+        // Check if user has permission to pin/unpin
+        boolean hasPermission = false;
+
+        if (message.getRoom() != null) {
+            // For rooms, check if user is admin/owner
+            List<RoomMember> activeMembers = roomMemberRepository.findActiveRoomMembers(message.getRoom().getId());
+            RoomMember member = activeMembers.stream()
+                    .filter(m -> m.getUser().getId().equals(userId))
+                    .findFirst()
+                    .orElseThrow(() -> new AppException("You are not a member of this room"));
+
+            hasPermission = member.getRole().name().equals("OWNER") ||
+                    member.getRole().name().equals("ADMIN") ||
+                    message.getSender().getId().equals(userId); // Message owner can pin/unpin their own
+        } else if (message.getConversation() != null) {
+            // For conversations, both participants can pin/unpin
+            hasPermission = true;
+        }
+
+        if (!hasPermission) {
+            throw new AppException("You don't have permission to pin/unpin messages");
+        }
+
+        // Update pin status
+        message.setIsPinned(pinned);
+        if (pinned) {
+            message.setPinnedAt(LocalDateTime.now());
+            message.setPinnedBy(userId);
+        } else {
+            message.setPinnedAt(null);
+            message.setPinnedBy(null);
+        }
+
+        message = messageRepository.save(message);
+
+        // Convert to DTO and broadcast
+        ChatMessage chatMessage = convertMessageToDTO(message);
+
+        // Broadcast pin/unpin update
+        WebSocketResponse<ChatMessage> response = WebSocketResponse.<ChatMessage>builder()
+                .type("MESSAGE")
+                .action(pinned ? "PIN" : "UNPIN")
+                .data(chatMessage)
+                .senderId(userId)
+                .senderUsername(user.getUsername())
+                .timestamp(LocalDateTime.now())
+                .build();
+
+        String destination = message.getRoom() != null ?
+                "/topic/room/" + message.getRoom().getId() :
+                "/topic/conversation/" + message.getConversation().getId();
+
+        messagingTemplate.convertAndSend(destination, response);
+
+        log.info("Message {} {} by user {}", messageId, pinned ? "pinned" : "unpinned", userId);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ChatMessage> getPinnedMessages(Long roomId, Long conversationId, Long userId) {
+        List<Message> pinnedMessages;
+
+        if (roomId != null) {
+            Room room = roomRepository.findById(roomId)
+                    .orElseThrow(() -> new AppException("Room not found"));
+
+            // Check if user is member
+            boolean isMember = room.getMembers().stream()
+                    .anyMatch(member -> member.getUser().getId().equals(userId));
+
+            if (!isMember) {
+                throw new AppException("You are not a member of this room");
+            }
+
+            pinnedMessages = messageRepository.findPinnedMessagesByRoomId(roomId);
+        } else if (conversationId != null) {
+            Conversation conversation = conversationRepository.findById(conversationId)
+                    .orElseThrow(() -> new AppException("Conversation not found"));
+
+            // Check if user is participant
+            if (!userId.equals(conversation.getParticipant1Id()) &&
+                    !userId.equals(conversation.getParticipant2Id())) {
+                throw new AppException("You are not a participant in this conversation");
+            }
+
+            pinnedMessages = messageRepository.findPinnedMessagesByConversationId(conversationId);
+        } else {
+            throw new AppException("Either roomId or conversationId must be provided");
+        }
+
+        return pinnedMessages.stream()
+                .map(this::convertMessageToDTO)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<String, Object> getMessagePageInfo(String messageId, int pageSize, Long userId) {
+        Message targetMessage = messageRepository.findByMessageId(messageId)
+                .orElseThrow(() -> new AppException("Message not found"));
+
+        // Check access permissions
+        boolean hasAccess = false;
+        Long roomId = null;
+        Long conversationId = null;
+
+        if (targetMessage.getRoom() != null) {
+            roomId = targetMessage.getRoom().getId();
+            hasAccess = targetMessage.getRoom().getMembers().stream()
+                    .anyMatch(member -> member.getUser().getId().equals(userId));
+        } else if (targetMessage.getConversation() != null) {
+            conversationId = targetMessage.getConversation().getId();
+            hasAccess = userId.equals(targetMessage.getConversation().getParticipant1Id()) ||
+                    userId.equals(targetMessage.getConversation().getParticipant2Id());
+        }
+
+        if (!hasAccess) {
+            throw new AppException("You don't have access to this message");
+        }
+
+        // Count messages newer than target message (for pagination calculation)
+        Long newerMessagesCount;
+        if (roomId != null) {
+            newerMessagesCount = messageRepository.countMessagesNewerThanInRoom(
+                    roomId, targetMessage.getCreatedAt());
+        } else {
+            newerMessagesCount = messageRepository.countMessagesNewerThanInConversation(
+                    conversationId, targetMessage.getCreatedAt());
+        }
+
+        // Calculate page number (0-based)
+        int pageNumber = (int) (newerMessagesCount / pageSize);
+
+        // Calculate position within page
+        int positionInPage = (int) (newerMessagesCount % pageSize);
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("messageId", messageId);
+        result.put("pageNumber", pageNumber);
+        result.put("positionInPage", positionInPage);
+        result.put("pageSize", pageSize);
+        result.put("roomId", roomId);
+        result.put("conversationId", conversationId);
+        result.put("totalNewerMessages", newerMessagesCount);
+
+        return result;
+    }
 }

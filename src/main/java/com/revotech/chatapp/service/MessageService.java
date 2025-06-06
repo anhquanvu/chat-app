@@ -8,6 +8,7 @@ import com.revotech.chatapp.model.dto.request.SendMessageRequest;
 import org.springframework.data.domain.Page;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public interface MessageService {
@@ -51,4 +52,9 @@ public interface MessageService {
     void autoMarkMessagesAsReadForActiveUsers(String messageId);
     Set<Long> getActiveUsersInChat(Long roomId, Long conversationId);
     void broadcastReadStatusUpdate(String messageId, Long readerId);
+
+    //pin message
+    void pinMessage(String messageId, Boolean pinned, Long userId);
+    List<ChatMessage> getPinnedMessages(Long roomId, Long conversationId, Long userId);
+    Map<String, Object> getMessagePageInfo(String messageId, int pageSize, Long userId);
 }

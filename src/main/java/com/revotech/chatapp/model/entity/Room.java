@@ -60,7 +60,7 @@ public class Room {
 
     private LocalDateTime lastActivityAt;
 
-    // FIX: Sử dụng SUBSELECT để tránh ConcurrentModificationException
+    //Sử dụng SUBSELECT để tránh ConcurrentModificationException
     @OneToMany(mappedBy = "room", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     @Fetch(FetchMode.SUBSELECT)
     @Builder.Default

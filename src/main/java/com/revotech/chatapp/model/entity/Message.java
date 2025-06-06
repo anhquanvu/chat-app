@@ -64,6 +64,12 @@ public class Message {
     @Builder.Default
     private Boolean isEdited = false;
 
+    @Builder.Default
+    private Boolean isPinned = false;
+
+    private LocalDateTime pinnedAt;
+    private Long pinnedBy;
+
     private LocalDateTime deletedAt;
     private Long deletedBy;
     private LocalDateTime editedAt;

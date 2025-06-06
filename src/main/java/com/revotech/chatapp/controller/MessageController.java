@@ -15,6 +15,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/messages")
@@ -90,5 +91,32 @@ public class MessageController {
             @AuthenticationPrincipal UserPrincipal currentUser) {
         Page<ChatMessage> messages = messageService.searchMessages(keyword, currentUser.getId(), page, size);
         return ResponseEntity.ok(messages);
+    }
+
+    @PostMapping("/{messageId}/pin")
+    public ResponseEntity<Void> pinMessage(
+            @PathVariable String messageId,
+            @RequestParam Boolean pinned,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+        messageService.pinMessage(messageId, pinned, currentUser.getId());
+        return ResponseEntity.ok().build();
+    }
+
+    @GetMapping("/pinned")
+    public ResponseEntity<List<ChatMessage>> getPinnedMessages(
+            @RequestParam(required = false) Long roomId,
+            @RequestParam(required = false) Long conversationId,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+        List<ChatMessage> pinnedMessages = messageService.getPinnedMessages(roomId, conversationId, currentUser.getId());
+        return ResponseEntity.ok(pinnedMessages);
+    }
+
+    @GetMapping("/{messageId}/page")
+    public ResponseEntity<Map<String, Object>> getMessagePage(
+            @PathVariable String messageId,
+            @RequestParam(defaultValue = "50") int pageSize,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+        Map<String, Object> result = messageService.getMessagePageInfo(messageId, pageSize, currentUser.getId());
+        return ResponseEntity.ok(result);
     }
 }

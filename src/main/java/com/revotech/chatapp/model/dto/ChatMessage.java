@@ -26,8 +26,10 @@ public class ChatMessage {
     private String replyToId;
     private Boolean isEdited;
     private LocalDateTime editedAt;
+    private Boolean isPinned;
+    private LocalDateTime pinnedAt;
+    private String pinnedByUsername;
     private FileMessage fileAttachment;
 
-    // THÊM FIELD NÀY
     private List<MessageReactionDTO> reactions;
 }

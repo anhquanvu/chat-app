@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -91,9 +92,17 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
     @Query("SELECT COUNT(m) FROM Message m WHERE m.room.id = :roomId AND m.isDeleted = false")
     Long countByRoomIdAndIsDeletedFalse(@Param("roomId") Long roomId);
 
-    @Query("SELECT COUNT(m) FROM Message m WHERE m.conversation.id = :conversationId AND m.isDeleted = false")
-    Long countByConversationIdAndIsDeletedFalse(@Param("conversationId") Long conversationId);
+    // Pinned messages queries
+    @Query("SELECT m FROM Message m WHERE m.room.id = :roomId AND m.isPinned = true AND m.isDeleted = false ORDER BY m.pinnedAt DESC")
+    List<Message> findPinnedMessagesByRoomId(@Param("roomId") Long roomId);
 
-    @Query("SELECT m FROM Message m WHERE m.sender.id = :userId AND m.isDeleted = false ORDER BY m.createdAt DESC")
-    Page<Message> findBySenderIdAndIsDeletedFalse(@Param("userId") Long userId, Pageable pageable);
+    @Query("SELECT m FROM Message m WHERE m.conversation.id = :conversationId AND m.isPinned = true AND m.isDeleted = false ORDER BY m.pinnedAt DESC")
+    List<Message> findPinnedMessagesByConversationId(@Param("conversationId") Long conversationId);
+
+    // Page calculation queries
+    @Query("SELECT COUNT(m) FROM Message m WHERE m.room.id = :roomId AND m.isDeleted = false AND m.createdAt > :targetTime")
+    Long countMessagesNewerThanInRoom(@Param("roomId") Long roomId, @Param("targetTime") LocalDateTime targetTime);
+
+    @Query("SELECT COUNT(m) FROM Message m WHERE m.conversation.id = :conversationId AND m.isDeleted = false AND m.createdAt > :targetTime")
+    Long countMessagesNewerThanInConversation(@Param("conversationId") Long conversationId, @Param("targetTime") LocalDateTime targetTime);
 }

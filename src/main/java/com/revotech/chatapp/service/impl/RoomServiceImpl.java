@@ -6,6 +6,7 @@ import com.revotech.chatapp.model.dto.RoomDTO;
 import com.revotech.chatapp.model.dto.RoomMemberDTO;
 import com.revotech.chatapp.model.dto.UserSummaryDTO;
 import com.revotech.chatapp.model.dto.request.CreateRoomRequest;
+import com.revotech.chatapp.model.entity.Message;
 import com.revotech.chatapp.model.entity.Room;
 import com.revotech.chatapp.model.entity.RoomMember;
 import com.revotech.chatapp.model.entity.User;
@@ -417,6 +418,15 @@ public class RoomServiceImpl implements RoomService {
     }
 
     private ChatMessage convertMessageToDTO(com.revotech.chatapp.model.entity.Message message) {
+        // Get pinned by user info if message is pinned
+        String pinnedByUsername = null;
+        if (message.getIsPinned() && message.getPinnedBy() != null) {
+            User pinnedByUser = userRepository.findById(message.getPinnedBy()).orElse(null);
+            if (pinnedByUser != null) {
+                pinnedByUsername = pinnedByUser.getUsername();
+            }
+        }
+
         return ChatMessage.builder()
                 .id(message.getMessageId())
                 .content(message.getContent())
@@ -431,6 +441,9 @@ public class RoomServiceImpl implements RoomService {
                 .conversationId(message.getConversation() != null ? message.getConversation().getId() : null)
                 .isEdited(message.getIsEdited())
                 .editedAt(message.getEditedAt())
+                .isPinned(message.getIsPinned())
+                .pinnedAt(message.getPinnedAt())
+                .pinnedByUsername(pinnedByUsername)
                 .build();
     }
 }
