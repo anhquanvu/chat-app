@@ -1,4 +1,5 @@
-// Global variables
+// Main Application - Fixed and Modular
+// Global variables for backward compatibility
 let stompClient = null;
 let currentUser = null;
 let authToken = null;
@@ -16,7 +17,7 @@ let readReceipts = new Map();
 let isUserActiveInChat = true;
 let scrollTimeout;
 
-// Authentication functions
+// Authentication Tab Switching
 function switchTab(tab) {
     document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.auth-form').forEach(f => f.classList.remove('active'));
@@ -33,9 +34,12 @@ function switchTab(tab) {
     document.getElementById('registerError').textContent = '';
 }
 
-// Sidebar navigation
+// Sidebar Navigation
 function switchSidebarTab(tab, event) {
-    leaveCurrentChat();
+    if (window.chatManager) {
+        window.chatManager.leaveCurrentChat();
+    }
+
     document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.sidebar-panel').forEach(p => p.classList.remove('active'));
 
@@ -59,7 +63,7 @@ function switchSidebarTab(tab, event) {
     }
 }
 
-// Authentication handlers
+// Authentication Form Handlers
 document.getElementById('loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
 
@@ -72,28 +76,9 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
         return;
     }
 
-    try {
-        const response = await fetch('/api/auth/signin', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                username: username,
-                password: password
-            })
-        });
-
-        if (response.ok) {
-            const data = await response.json();
-            handleAuthSuccess(data);
-        } else {
-            const error = await response.text();
-            errorDiv.textContent = error || 'Đăng nhập thất bại';
-        }
-    } catch (error) {
-        console.error('Login error:', error);
-        errorDiv.textContent = 'Lỗi kết nối đến server';
+    const result = await window.authManager.login(username, password);
+    if (!result.success) {
+        errorDiv.textContent = result.error;
     }
 });
 
@@ -117,228 +102,43 @@ document.getElementById('registerForm').addEventListener('submit', async (e) => 
         return;
     }
 
-    try {
-        const response = await fetch('/api/auth/signup', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                username: username,
-                email: email,
-                fullName: fullName,
-                phoneNumber: phoneNumber,
-                password: password
-            })
-        });
+    const result = await window.authManager.register({
+        username, email, fullName, phoneNumber, password
+    });
 
-        if (response.ok) {
-            const data = await response.json();
-            handleAuthSuccess(data);
-        } else {
-            const error = await response.text();
-            errorDiv.textContent = error || 'Đăng ký thất bại';
-        }
-    } catch (error) {
-        console.error('Register error:', error);
-        errorDiv.textContent = 'Lỗi kết nối đến server';
+    if (!result.success) {
+        errorDiv.textContent = result.error;
     }
 });
 
+// Legacy functions for backward compatibility
 function handleAuthSuccess(data) {
-    authToken = data.accessToken;
-    refreshToken = data.refreshToken;
-    currentUser = {
-        id: data.userId,
-        username: data.username,
-        fullName: data.fullName,
-        email: data.email
-    };
-
-    if (!currentUser.id || !currentUser.username) {
-        console.error('Invalid user data received:', currentUser);
-        return;
-    }
-
-    localStorage.setItem('authToken', authToken);
-    localStorage.setItem('refreshToken', refreshToken);
-    localStorage.setItem('currentUser', JSON.stringify(currentUser));
-
-    document.getElementById('currentUsername').textContent = currentUser.fullName || currentUser.username;
-    document.getElementById('userAvatar').textContent = (currentUser.fullName || currentUser.username).charAt(0).toUpperCase();
-    document.getElementById('userRole').textContent = 'Thành viên';
-
-    document.getElementById('authModal').classList.add('hidden');
-    document.getElementById('chatContainer').classList.remove('hidden');
-
-    connectWebSocket();
-    loadInitialData();
+    return window.authManager.handleAuthSuccess(data);
 }
 
 function logout() {
-    if (stompClient && connected) {
-        stompClient.disconnect(function () {
-            console.log('STOMP disconnected on logout');
-        });
-        stompClient = null;
-        connected = false;
-    }
-
-    // Rest of logout logic...
-    if (authToken) {
-        fetch('/api/auth/logout', {
-            method: 'POST',
-            headers: {
-                'Authorization': 'Bearer ' + authToken
-            }
-        }).catch(error => console.error('Logout error:', error));
-    }
-
-    localStorage.removeItem('authToken');
-    localStorage.removeItem('refreshToken');
-    localStorage.removeItem('currentUser');
-
-    authToken = null;
-    refreshToken = null;
-    currentUser = null;
-    currentChatType = null;
-    currentChatId = null;
-
-    document.getElementById('authModal').classList.remove('hidden');
-    document.getElementById('chatContainer').classList.add('hidden');
-
-    document.getElementById('loginForm').reset();
-    document.getElementById('registerForm').reset();
-    document.getElementById('loginError').textContent = '';
-    document.getElementById('registerError').textContent = '';
+    return window.authManager.logout();
 }
 
-// WebSocket connection
 function connectWebSocket() {
-    if (!authToken || !currentUser) {
-        console.error('No auth token or user data');
-        return;
+    if (window.authManager && window.wsManager) {
+        return window.wsManager.connect(
+            window.authManager.getAuthToken(),
+            window.authManager.getCurrentUser()
+        );
     }
-
-    const socket = new SockJS('/ws');
-    stompClient = Stomp.over(socket);
-
-    // Tắt debug log trong production
-    stompClient.debug = function (str) {
-        // console.log('STOMP: ' + str);
-    };
-
-    // Cấu hình heartbeat cho STOMP client
-    stompClient.heartbeat.outgoing = 25000; // Client gửi heartbeat mỗi 25 giây
-    stompClient.heartbeat.incoming = 25000; // Expect server heartbeat mỗi 25 giây
-
-    const connectHeaders = {
-        'Authorization': 'Bearer ' + authToken,
-        // STOMP sẽ tự động negotiate heartbeat với server
-    };
-
-    stompClient.connect(connectHeaders,
-        function onConnect(frame) {
-            console.log('Connected to WebSocket:', frame);
-            connected = true;
-
-            // Subscribe to user status updates
-            stompClient.subscribe('/topic/user-status', function (message) {
-                const userStatus = JSON.parse(message.body);
-                updateUserStatus(userStatus);
-            });
-
-            // Subscribe to personal notifications
-            stompClient.subscribe('/user/queue/message-status', function (message) {
-                console.log('Personal notification:', message.body);
-            });
-
-            console.log('STOMP heartbeat configured: outgoing=' +
-                stompClient.heartbeat.outgoing + 'ms, incoming=' +
-                stompClient.heartbeat.incoming + 'ms');
-
-        },
-        function onError(error) {
-            console.error('WebSocket connection error:', error);
-            connected = false;
-
-            // STOMP sẽ tự động phát hiện connection loss thông qua heartbeat
-            // Không cần manual detection
-
-            if (error.toString().includes('401') || error.toString().includes('403')) {
-                console.log('Authentication error, attempting token refresh...');
-                refreshAuthToken();
-            } else {
-                // Tự động reconnect sau 5 giây
-                setTimeout(() => {
-                    if (!connected && authToken) {
-                        console.log('Attempting WebSocket reconnection...');
-                        connectWebSocket();
-                    }
-                }, 5000);
-            }
-        }
-    );
-
-    // STOMP sẽ tự động handle connection loss và cleanup
-    socket.onclose = function () {
-        console.log('WebSocket connection closed');
-        connected = false;
-    };
+    console.warn('AuthManager or WSManager not available');
 }
-
-function monitorConnection() {
-    setInterval(() => {
-        if (stompClient && connected) {
-            // Kiểm tra connection status thông qua STOMP
-            if (!stompClient.connected) {
-                console.warn('STOMP connection lost, attempting reconnect...');
-                connected = false;
-                connectWebSocket();
-            }
-        }
-    }, 30000); // Kiểm tra mỗi 30 giây
-}
-
-document.addEventListener('DOMContentLoaded', function () {
-    initializeApp();
-    monitorConnection();
-});
 
 async function refreshAuthToken() {
-    if (!refreshToken) {
-        logout();
-        return;
+    if (window.authManager) {
+        return await window.authManager.refreshAuthToken();
     }
-
-    try {
-        const response = await fetch('/api/auth/refresh', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: refreshToken
-        });
-
-        if (response.ok) {
-            const data = await response.json();
-            authToken = data.accessToken;
-            refreshToken = data.refreshToken;
-
-            localStorage.setItem('authToken', authToken);
-            localStorage.setItem('refreshToken', refreshToken);
-
-            connectWebSocket();
-        } else {
-            logout();
-        }
-    } catch (error) {
-        console.error('Token refresh error:', error);
-        logout();
-    }
+    console.warn('AuthManager not available');
+    return false;
 }
 
-// Load initial data
+// Data Loading Functions
 async function loadInitialData() {
     await Promise.all([
         loadConversations(),
@@ -347,12 +147,11 @@ async function loadInitialData() {
     ]);
 }
 
-// Data loading functions
 async function loadConversations() {
     try {
         const response = await fetch('/api/conversations?page=0&size=50', {
             headers: {
-                'Authorization': 'Bearer ' + authToken
+                'Authorization': 'Bearer ' + (window.authToken || window.authManager?.getAuthToken())
             }
         });
 
@@ -376,22 +175,22 @@ function displayConversations(conversations) {
     }
 
     container.innerHTML = conversations.map(conv => `
-            <div class="list-item" onclick="openConversation(${conv.id}, '${conv.participant?.fullName || conv.participant?.username}')">
-                <div class="item-header">
-                    <div class="item-name">${conv.participant?.fullName || conv.participant?.username}</div>
-                    <div class="item-time">${formatTime(conv.lastMessageAt)}</div>
-                    ${conv.unreadCount > 0 ? `<div class="item-badge">${conv.unreadCount}</div>` : ''}
-                </div>
-                <div class="item-preview">${conv.lastMessage?.content || 'Chưa có tin nhắn'}</div>
+        <div class="list-item" onclick="openConversation(${conv.id}, '${conv.participant?.fullName || conv.participant?.username}')">
+            <div class="item-header">
+                <div class="item-name">${conv.participant?.fullName || conv.participant?.username}</div>
+                <div class="item-time">${formatTime(conv.lastMessageAt)}</div>
+                ${conv.unreadCount > 0 ? `<div class="item-badge">${conv.unreadCount}</div>` : ''}
             </div>
-        `).join('');
+            <div class="item-preview">${conv.lastMessage?.content || 'Chưa có tin nhắn'}</div>
+        </div>
+    `).join('');
 }
 
 async function loadRooms() {
     try {
         const response = await fetch('/api/rooms?page=0&size=50', {
             headers: {
-                'Authorization': 'Bearer ' + authToken
+                'Authorization': 'Bearer ' + (window.authToken || window.authManager?.getAuthToken())
             }
         });
 
@@ -415,24 +214,24 @@ function displayRooms(rooms) {
     }
 
     container.innerHTML = rooms.map(room => `
-            <div class="list-item" onclick="openRoom(${room.id}, '${room.name}')">
-                <div class="item-header">
-                    <div class="item-name">${room.name}</div>
-                    <div class="item-time">${formatTime(room.lastActivityAt)}</div>
-                    ${room.unreadCount > 0 ? `<div class="item-badge">${room.unreadCount}</div>` : ''}
-                </div>
-                <div class="item-preview">
-                    👥 ${room.memberCount} thành viên • ${room.lastMessage?.content || 'Chưa có tin nhắn'}
-                </div>
+        <div class="list-item" onclick="openRoom(${room.id}, '${room.name}')">
+            <div class="item-header">
+                <div class="item-name">${room.name}</div>
+                <div class="item-time">${formatTime(room.lastActivityAt)}</div>
+                ${room.unreadCount > 0 ? `<div class="item-badge">${room.unreadCount}</div>` : ''}
             </div>
-        `).join('');
+            <div class="item-preview">
+                👥 ${room.memberCount} thành viên • ${room.lastMessage?.content || 'Chưa có tin nhắn'}
+            </div>
+        </div>
+    `).join('');
 }
 
 async function loadContacts() {
     try {
         const response = await fetch('/api/users/contacts?status=ACCEPTED&page=0&size=50', {
             headers: {
-                'Authorization': 'Bearer ' + authToken
+                'Authorization': 'Bearer ' + (window.authToken || window.authManager?.getAuthToken())
             }
         });
 
@@ -456,346 +255,44 @@ function displayContacts(contacts) {
     }
 
     container.innerHTML = contacts.map(contact => `
-            <div class="list-item" onclick="startDirectChat(${contact.contact.id}, '${contact.contact.fullName || contact.contact.username}')">
-                <div class="item-header">
-                    <div class="item-name">${contact.contact.fullName || contact.contact.username}</div>
-                    ${contact.contact.isOnline ? '<div class="online-indicator"></div>' : ''}
-                </div>
-                <div class="item-preview">@${contact.contact.username}</div>
+        <div class="list-item" onclick="startDirectChat(${contact.contact.id}, '${contact.contact.fullName || contact.contact.username}')">
+            <div class="item-header">
+                <div class="item-name">${contact.contact.fullName || contact.contact.username}</div>
+                ${contact.contact.isOnline ? '<div class="online-indicator"></div>' : ''}
             </div>
-        `).join('');
+            <div class="item-preview">@${contact.contact.username}</div>
+        </div>
+    `).join('');
 }
 
-// Chat opening functions
+// Chat Opening Functions - Updated to use managers
 function openConversation(conversationId, title) {
-    // Leave current chat first
-    leaveCurrentChat();
-
-    currentChatType = 'conversation';
-    currentChatId = conversationId;
-    currentChatKey = `conversation:${conversationId}`;
-
-    document.querySelectorAll('#conversationsList .list-item').forEach(item => item.classList.remove('active'));
-    event.target.closest('.list-item').classList.add('active');
-
-    document.getElementById('emptyChatState').classList.add('hidden');
-    document.getElementById('activeChatContent').classList.remove('hidden');
-    document.getElementById('chatTitle').textContent = title;
-
-    // Subscribe to conversation messages
-    if (stompClient && connected) {
-        // Main conversation subscription
-        stompClient.subscribe(`/topic/conversation/${conversationId}`, function (message) {
-            try {
-                const response = JSON.parse(message.body);
-                console.log('Conversation message received:', response);
-
-                switch (response.type) {
-                    case 'MESSAGE':
-                        if (response.action === 'SEND') {
-                            showMessage(response.data);
-                        } else if (response.action === 'UPDATE') {
-                            updateMessage(response.data);
-                        } else if (response.action === 'DELETE') {
-                            removeMessage(response.data);
-                        } else if (response.action === 'PIN' || response.action === 'UNPIN') {
-                            handleMessagePinUpdate(response.data, response.action);
-                        }
-                        break;
-                    case 'TYPING':
-                        handleTypingNotification(response);
-                        break;
-                    case 'REACTION':
-                        handleReactionUpdate(response.data);
-                        break;
-                    case 'MESSAGE_STATUS':
-                        handleMessageStatusUpdate(response.data);
-                        break;
-                    case 'MESSAGE_READ':
-                        handleReadReceiptUpdate(response.data);
-                        break;
-                    case 'MESSAGE_BATCH_READ':
-                        handleBatchReadReceiptUpdate(response.data);
-                        break;
-                }
-            } catch (error) {
-                console.error('Error processing conversation WebSocket message:', error, message.body);
-            }
-        });
-
-        // Personal message status subscription (for own messages)
-        const messageStatusSub = stompClient.subscribe(`/user/queue/message-status`, function (message) {
-            try {
-                const response = JSON.parse(message.body);
-                console.log('Personal message status received:', response);
-
-                if (response.type === 'MESSAGE_STATUS') {
-                    handleMessageStatusUpdate(response.data);
-                }
-            } catch (error) {
-                console.error('Error processing personal message status:', error);
-            }
-        });
-
-        // Read receipts subscription (when others read my messages)
-        const readReceiptSub = stompClient.subscribe(`/user/queue/read-receipts`, function (message) {
-            try {
-                const response = JSON.parse(message.body);
-                console.log('Read receipt received:', response);
-
-                switch (response.type) {
-                    case 'MESSAGE_READ':
-                        handleReadReceiptUpdate(response.data);
-                        break;
-                    case 'MESSAGE_BATCH_READ':
-                        handleBatchReadReceiptUpdate(response.data);
-                        break;
-                    default:
-                        console.log('Unknown read receipt type:', response.type);
-                }
-            } catch (error) {
-                console.error('Error processing read receipt:', error);
-            }
-        });
-
-        // Store subscriptions for cleanup
-        if (!window.activeSubscriptions) {
-            window.activeSubscriptions = [];
-        }
-        window.activeSubscriptions.push(messageStatusSub, readReceiptSub);
-
-        // Send enter chat notification
-        stompClient.send(`/app/chat/conversation/${conversationId}/enter`, {}, JSON.stringify({}));
+    if (window.chatManager) {
+        window.chatManager.openConversation(conversationId, title);
+        // Update global variables for backward compatibility
+        currentChatType = 'conversation';
+        currentChatId = conversationId;
+        currentChatKey = `conversation:${conversationId}`;
     }
-
-    loadConversationMessages(conversationId);
-
-    setTimeout(() => {
-        loadPinnedMessages();
-    }, 500);
 }
 
 function openRoom(roomId, title) {
-    // Leave current chat first
-    leaveCurrentChat();
-
-    currentChatType = 'room';
-    currentChatId = roomId;
-    currentChatKey = `room:${roomId}`;
-
-    document.querySelectorAll('#roomsList .list-item').forEach(item => item.classList.remove('active'));
-    event.target.closest('.list-item').classList.add('active');
-
-    document.getElementById('emptyChatState').classList.add('hidden');
-    document.getElementById('activeChatContent').classList.remove('hidden');
-    document.getElementById('chatTitle').textContent = title;
-
-    if (stompClient && connected) {
-        stompClient.subscribe(`/topic/room/${roomId}`, function (message) {
-            try {
-                const response = JSON.parse(message.body);
-                console.log('Room message received:', response);
-
-                if (response.type === 'MESSAGE' && response.action === 'SEND') {
-                    showMessage(response.data);
-                } else if (response.type === 'TYPING') {
-                    handleTypingNotification(response);
-                } else if (response.type === 'REACTION') {
-                    handleReactionUpdate(response.data);
-                } else if (response.type === 'MESSAGE' && response.action === 'UPDATE') {
-                    updateMessage(response.data);
-                } else if (response.type === 'MESSAGE' && response.action === 'DELETE') {
-                    removeMessage(response.data);
-                } else if (response.type === 'MESSAGE_STATUS') {
-                    handleMessageStatusUpdate(response.data);
-                }else if (response.type === 'MESSAGE' && (response.action === 'PIN' || response.action === 'UNPIN')) {
-                    handleMessagePinUpdate(response.data, response.action);
-                }
-            } catch (error) {
-                console.error('Error processing WebSocket message:', error, message.body);
-            }
-        });
-
-        // FIXED: Subscribe to personal message status updates for room
-        stompClient.subscribe(`/user/queue/message-status`, function (message) {
-            try {
-                const response = JSON.parse(message.body);
-                console.log('Personal room status received:', response);
-                handleMessageStatusUpdate(response.data);
-            } catch (error) {
-                console.error('Error processing personal room status:', error);
-            }
-        });
-
-        stompClient.send(`/app/chat/room/${roomId}/enter`, {}, JSON.stringify({}));
-    }
-
-    loadRoomMessages(roomId);
-
-    setTimeout(() => {
-        loadPinnedMessages();
-    }, 500);
-}
-
-function handleReadReceiptUpdate(data) {
-    console.log('Processing read receipt:', data);
-
-    if (!data || !data.messageId) {
-        console.warn('Invalid read receipt data:', data);
-        return;
-    }
-
-    const messageElement = document.querySelector(`[data-message-id="${data.messageId}"]`);
-    if (!messageElement) {
-        console.debug('Message element not found for read receipt:', data.messageId);
-        return;
-    }
-
-    // Chỉ cập nhật cho tin nhắn của current user
-    const senderId = messageElement.dataset.senderId;
-    if (senderId !== currentUser.id.toString()) {
-        console.debug('Ignoring read receipt for message not sent by current user');
-        return;
-    }
-
-    const statusIcon = messageElement.querySelector('.status-icon');
-    const statusText = messageElement.querySelector('.status-text');
-
-    if (statusIcon && statusText) {
-        // Cập nhật sang trạng thái "Đã đọc"
-        statusIcon.textContent = '✓✓';
-        statusIcon.className = 'status-icon read';
-
-        // Hiển thị ai đã đọc
-        let readText = 'Đã đọc';
-        if (data.readerName) {
-            readText = `Đã đọc bởi ${data.readerName}`;
-        }
-        statusText.textContent = readText;
-
-        // Thêm hiệu ứng visual
-        messageElement.classList.add('status-updated');
-        setTimeout(() => {
-            messageElement.classList.remove('status-updated');
-        }, 1000);
-
-        console.log(`✅ Message ${data.messageId} marked as read by ${data.readerName || 'unknown'}`);
-    } else {
-        console.warn('Status elements not found in message:', data.messageId);
+    if (window.chatManager) {
+        window.chatManager.openRoom(roomId, title);
+        // Update global variables for backward compatibility
+        currentChatType = 'room';
+        currentChatId = roomId;
+        currentChatKey = `room:${roomId}`;
     }
 }
-
-function handleBatchReadReceiptUpdate(data) {
-    console.log('Processing batch read receipt:', data);
-
-    if (!data || !data.messageIds || !Array.isArray(data.messageIds)) {
-        console.warn('Invalid batch read receipt data:', data);
-        return;
-    }
-
-    let updatedCount = 0;
-    data.messageIds.forEach(messageId => {
-        const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
-        if (messageElement && messageElement.dataset.senderId === currentUser.id.toString()) {
-            handleReadReceiptUpdate({
-                messageId: messageId,
-                readerId: data.readerId,
-                readerName: data.readerName,
-                timestamp: data.timestamp
-            });
-            updatedCount++;
-        }
-    });
-
-    if (updatedCount > 0) {
-        console.log(`✅ Batch updated ${updatedCount} messages as read by ${data.readerName || 'unknown'}`);
-    }
-}
-
-function updateMessageStatus(messageId, status, readerName, readerId) {
-    const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
-    if (!messageElement) {
-        console.debug('Message element not found for status update:', messageId);
-        return;
-    }
-
-    // Chỉ cập nhật cho tin nhắn của current user
-    const senderId = messageElement.dataset.senderId;
-    if (senderId !== currentUser.id.toString()) {
-        console.debug('Ignoring status update for message not sent by current user');
-        return;
-    }
-
-    const statusIcon = messageElement.querySelector('.status-icon');
-    const statusText = messageElement.querySelector('.status-text');
-
-    if (statusIcon && statusText) {
-        // Cập nhật icon và class
-        statusIcon.textContent = getStatusIcon(status);
-        statusIcon.className = `status-icon ${status.toLowerCase()}`;
-
-        // Cập nhật text với thông tin người đọc
-        let statusTextContent = getStatusText(status);
-        if (status === 'READ' && readerName) {
-            statusTextContent = `Đã đọc bởi ${readerName}`;
-        }
-        statusText.textContent = statusTextContent;
-
-        // Thêm hiệu ứng visual
-        messageElement.classList.add('status-updated');
-        setTimeout(() => {
-            messageElement.classList.remove('status-updated');
-        }, 1000);
-
-        console.log(`Message ${messageId} status updated to ${status}${readerName ? ` by ${readerName}` : ''}`);
-    }
-}
-
-
 
 function leaveCurrentChat() {
-    if (!currentChatKey || !stompClient || !connected) return;
-
-    console.log('Leaving current chat:', currentChatKey);
-
-    // Cleanup subscriptions
-    if (window.activeSubscriptions) {
-        window.activeSubscriptions.forEach(sub => {
-            if (sub && sub.unsubscribe) {
-                sub.unsubscribe();
-            }
-        });
-        window.activeSubscriptions = [];
-    }
-
-    if (currentChatType === 'room' && currentChatId) {
-        stompClient.send(`/app/chat/room/${currentChatId}/leave`, {}, JSON.stringify({}));
-    } else if (currentChatType === 'conversation' && currentChatId) {
-        stompClient.send(`/app/chat/conversation/${currentChatId}/leave`, {}, JSON.stringify({}));
-    }
-
-    // Clear current chat info
-    currentChatType = null;
-    currentChatId = null;
-    currentChatKey = null;
-
-    // Clear typing users
-    typingUsers.clear();
-    updateTypingIndicator();
-}
-
-window.addEventListener('beforeunload', function () {
-    leaveCurrentChat();
-    if (stompClient && connected) {
-        stompClient.disconnect();
-    }
-});
-
-function handleMessageStatusUpdate(data) {
-    console.log('Message status update received:', data);
-
-    if (data && data.messageId && data.status) {
-        updateMessageStatus(data.messageId, data.status, data.readBy, data.readerId);
+    if (window.chatManager) {
+        window.chatManager.leaveCurrentChat();
+        // Clear global variables
+        currentChatType = null;
+        currentChatId = null;
+        currentChatKey = null;
     }
 }
 
@@ -804,7 +301,7 @@ async function startDirectChat(userId, userName) {
         const response = await fetch(`/api/conversations/direct/${userId}`, {
             method: 'GET',
             headers: {
-                'Authorization': 'Bearer ' + authToken
+                'Authorization': 'Bearer ' + (window.authToken || window.authManager?.getAuthToken())
             }
         });
 
@@ -820,524 +317,130 @@ async function startDirectChat(userId, userName) {
     }
 }
 
-// Message loading functions
-async function loadConversationMessages(conversationId) {
-    try {
-        const response = await fetch(`/api/conversations/${conversationId}/messages?page=0&size=50`, {
-            headers: {
-                'Authorization': 'Bearer ' + authToken
-            }
-        });
-
-        if (response.ok) {
-            const data = await response.json();
-            displayMessages(data.content || []);
-        }
-    } catch (error) {
-        console.error('Error loading conversation messages:', error);
-    }
-}
-
-async function loadRoomMessages(roomId) {
-    try {
-        const response = await fetch(`/api/rooms/${roomId}/messages?page=0&size=50`, {
-            headers: {
-                'Authorization': 'Bearer ' + authToken
-            }
-        });
-
-        if (response.ok) {
-            const data = await response.json();
-            displayMessages(data.content || []);
-        }
-    } catch (error) {
-        console.error('Error loading room messages:', error);
-    }
-}
-
+// Message Functions - Delegate to MessageManager
 function displayMessages(messages, appendToTop = false) {
-    const wrapper = document.getElementById('messagesWrapper');
-    const typingIndicator = document.getElementById('typingIndicator');
-
-    if (!appendToTop) {
-        wrapper.innerHTML = '';
-        wrapper.appendChild(typingIndicator);
-    }
-
-    const sortedMessages = messages.slice().reverse();
-
-    for (const message of sortedMessages) {
-        showMessage(message, false); // Không cuộn từng message
-    }
-
-    if (!appendToTop) {
-        scrollToBottom();
+    if (window.messageManager) {
+        window.messageManager.displayMessages(messages, appendToTop);
     }
 }
-
 
 function showMessage(message, shouldScroll = true) {
-    const wrapper = document.getElementById('messagesWrapper');
-    const typingIndicator = document.getElementById('typingIndicator');
-
-    // Check if message already exists
-    const existingMessage = wrapper.querySelector(`[data-message-id="${message.id}"]`);
-    if (existingMessage) {
-        return;
-    }
-
-    const messageElement = createMessageElement(message);
-
-    // Insert before typing indicator
-    wrapper.insertBefore(messageElement, typingIndicator);
-
-    if (messageVisibilityTracker) {
-        messageVisibilityTracker.observeNewMessage(messageElement);
-    }
-
-    // Auto scroll for new messages
-    if (shouldScroll) {
-        const container = document.getElementById('messagesContainer');
-        const isAtBottom = container.scrollHeight - container.clientHeight <= container.scrollTop + 100;
-
-        // Chỉ cuộn nếu người dùng đang ở gần đáy hoặc đây là tin của chính mình
-        if (isAtBottom || message.senderId === currentUser.id) {
-            requestAnimationFrame(() => {
-                container.scrollTop = container.scrollHeight;
-            });
-        }
-    }
-
-    // Mark message as read if not own message
-    if (message.senderId !== currentUser.id && currentChatType && currentChatId) {
-        setTimeout(() => markMessageAsRead(message.id), 1000);
+    if (window.messageManager) {
+        window.messageManager.showMessage(message, shouldScroll);
     }
 }
 
 function createMessageElement(message) {
-    const messageElement = document.createElement('div');
-    const isOwnMessage = message.senderId === currentUser.id;
-    let messageClass = 'message ';
-
-    if (message.type === 'JOIN' || message.type === 'LEAVE') {
-        messageClass += 'system';
-        messageElement.innerHTML = `
-            <div class="message-content">${message.content || `${message.senderName} đã ${message.type === 'JOIN' ? 'tham gia' : 'rời khỏi'} phòng chat`}</div>
-        `;
-    } else if (message.type === 'CHAT') {
-        messageClass += isOwnMessage ? 'own' : 'chat';
-        const timestamp = new Date(message.timestamp).toLocaleTimeString('vi-VN', {
-            hour: '2-digit',
-            minute: '2-digit'
-        });
-
-        const messageId = message.id;
-        const statusIcon = getStatusIcon(message.status);
-        const reactions = message.reactions || [];
-
-        messageElement.innerHTML = `
-            ${!isOwnMessage ? `<div class="message-header">
-                <span class="message-sender">${message.senderName}</span>
-                <span class="message-time">${timestamp}</span>
-            </div>` : ''}
-            ${message.isPinned ? `<div class="message-pinned-indicator">📌 Tin nhắn đã được ghim${message.pinnedByUsername ? ` bởi ${message.pinnedByUsername}` : ''}</div>` : ''}
-            <div class="message-content">${message.content}</div>
-            <div class="message-reactions" id="reactions-${messageId}">
-                ${renderReactions(reactions, messageId)}
-                <div class="add-reaction-btn" onclick="showReactionPicker('${messageId}', event)">➕</div>
-            </div>
-            <div class="message-footer">
-                <div class="message-actions">
-                    ${canPinMessage() ? `<button class="pin-btn" onclick="togglePinMessage('${messageId}', ${!message.isPinned})" title="${message.isPinned ? 'Bỏ ghim' : 'Ghim tin nhắn'}">
-                        ${message.isPinned ? '📌' : '📍'}
-                    </button>` : ''}
-                </div>
-                ${isOwnMessage ? `<div class="message-status">
-                    <span class="status-icon ${message.status ? message.status.toLowerCase() : 'sent'}">${statusIcon}</span>
-                    <span class="status-text">${getStatusText(message.status)}</span>
-                </div>` : ''}
-                ${isOwnMessage ? `<div class="message-time">${timestamp}</div>` : ''}
-            </div>
-        `;
-
-        if (isOwnMessage) {
-            messageElement.addEventListener('dblclick', () => editMessage(messageId, message.content));
-        }
+    if (window.messageManager) {
+        return window.messageManager.createMessageElement(message);
     }
-
-    messageElement.className = messageClass;
-    messageElement.dataset.messageId = message.id;
-    messageElement.dataset.senderId = message.senderId;
-
-    return messageElement;
+    return document.createElement('div');
 }
 
-function scrollToBottom() {
-    const container = document.getElementById('messagesContainer');
-    if (container) {
-        requestAnimationFrame(() => {
-            container.scrollTop = container.scrollHeight;
-        });
+function handleMessageStatusUpdate(data) {
+    if (window.messageManager) {
+        window.messageManager.handleMessageStatusUpdate(data);
     }
 }
 
-function renderReactions(reactions, messageId) {
-    if (!reactions || reactions.length === 0) {
-        return '';
+function handleReadReceiptUpdate(data) {
+    if (window.messageManager) {
+        window.messageManager.handleReadReceiptUpdate(data);
     }
-
-    return reactions.map(reaction => `
-            <div class="reaction-item ${reaction.currentUserReacted ? 'own-reaction' : ''}"
-                 onclick="toggleReaction('${messageId}', '${reaction.type}')">
-                <span class="reaction-emoji">${reaction.emoji}</span>
-                <span class="reaction-count">${reaction.count}</span>
-            </div>
-        `).join('');
 }
 
-function getStatusIcon(status) {
-    const icons = {
-        'SENDING': '🕐',
-        'SENT': '✓',
-        'DELIVERED': '✓✓',
-        'READ': '✓✓',
-        'FAILED': '❌'
-    };
-    return icons[status] || '✓';
+function handleBatchReadReceiptUpdate(data) {
+    if (window.messageManager) {
+        window.messageManager.handleBatchReadReceiptUpdate(data);
+    }
 }
 
-function getStatusText(status) {
-    const texts = {
-        'SENDING': 'Đang gửi',
-        'SENT': 'Đã gửi',
-        'DELIVERED': 'Đã nhận',
-        'READ': 'Đã xem',
-        'FAILED': 'Thất bại'
-    };
-    return texts[status] || 'Đã gửi';
+function handleReactionUpdate(data) {
+    if (window.messageManager) {
+        window.messageManager.handleReactionUpdate(data);
+    }
 }
 
-// Message sending
+function updateMessage(message) {
+    if (window.messageManager) {
+        window.messageManager.updateMessage(message);
+    }
+}
+
+function removeMessage(messageId) {
+    if (window.messageManager) {
+        window.messageManager.removeMessage(messageId);
+    }
+}
+
+// Typing Functions - Delegate to ChatManager
+function handleTypingNotification(response) {
+    if (window.chatManager) {
+        window.chatManager.handleTypingNotification(response);
+    }
+}
+
 function sendMessage() {
-    const messageInput = document.getElementById('messageInput');
-    const messageContent = messageInput.value.trim();
-    if (!messageContent || !stompClient || !connected || !currentChatType || !currentChatId) return;
-
-    const chatMessage = {
-        content: messageContent,
-        type: 'CHAT'
-    };
-
-    if (currentChatType === 'room') {
-        stompClient.send(`/app/chat/room/${currentChatId}`, {}, JSON.stringify(chatMessage));
-    } else if (currentChatType === 'conversation') {
-        stompClient.send(`/app/chat/conversation/${currentChatId}`, {}, JSON.stringify(chatMessage));
+    if (window.chatManager) {
+        window.chatManager.sendMessage();
     }
-
-    messageInput.value = '';
-    messageInput.style.height = 'auto';
-    sendStopTyping();
 }
 
-// Typing functions
 function sendTyping() {
-    if (!stompClient || !connected || !currentChatType || !currentChatId) {
-        return;
-    }
-
-    const typingMessage = {
-        typing: true
-    };
-
-    if (currentChatType === 'room') {
-        stompClient.send(`/app/chat/typing/room/${currentChatId}`, {}, JSON.stringify(typingMessage));
-    } else if (currentChatType === 'conversation') {
-        stompClient.send(`/app/chat/typing/conversation/${currentChatId}`, {}, JSON.stringify(typingMessage));
+    if (window.chatManager) {
+        window.chatManager.sendTyping();
     }
 }
 
 function sendStopTyping() {
-    if (!stompClient || !connected || !currentChatType || !currentChatId) {
-        return;
-    }
-
-    const stopTypingMessage = {
-        typing: false
-    };
-
-    if (currentChatType === 'room') {
-        stompClient.send(`/app/chat/typing/room/${currentChatId}`, {}, JSON.stringify(stopTypingMessage));
-    } else if (currentChatType === 'conversation') {
-        stompClient.send(`/app/chat/typing/conversation/${currentChatId}`, {}, JSON.stringify(stopTypingMessage));
-    }
-
-    isCurrentlyTyping = false;
-}
-
-function handleTypingNotification(response) {
-    console.log('Processing typing notification:', response);
-    console.log('Response data:', response.data);
-
-    try {
-        let userId, username, isTyping;
-
-        // Xử lý cấu trúc WebSocketResponse từ backend
-        if (response.type === 'TYPING' && response.data) {
-            // Cấu trúc: WebSocketResponse<TypingIndicator>
-            const data = response.data;
-            userId = data.userId;
-            username = data.username || data.fullName;
-
-            // Xác định isTyping từ action hoặc data.isTyping
-            if (response.action === 'START') {
-                isTyping = true;
-            } else if (response.action === 'STOP') {
-                isTyping = false;
-            } else {
-                isTyping = data.isTyping;
-            }
-        } else if (response.data && response.data.userId !== undefined) {
-            // Fallback: data object trực tiếp
-            const data = response.data;
-            userId = data.userId;
-            username = data.username || data.fullName;
-            isTyping = data.isTyping;
-        } else if (response.userId !== undefined) {
-            // Fallback: response trực tiếp (backward compatibility)
-            userId = response.userId;
-            username = response.username || response.senderUsername;
-            isTyping = response.isTyping;
-        } else {
-            console.warn('Unknown typing notification structure:', response);
-            return;
-        }
-
-        console.log('Extracted values:', {userId, username, isTyping, currentUserId: currentUser.id});
-
-        // Validate required fields
-        if (userId === undefined || username === undefined || isTyping === undefined) {
-            console.warn('Missing required fields in typing notification:', {userId, username, isTyping});
-            return;
-        }
-
-        // Ignore own typing notifications
-        if (userId === currentUser.id) {
-            console.log('Ignoring own typing notification');
-            return;
-        }
-
-        // Update typing users set
-        if (isTyping) {
-            console.log('Adding user to typing list:', username);
-            typingUsers.add(username);
-        } else {
-            console.log('Removing user from typing list:', username);
-            typingUsers.delete(username);
-        }
-
-        console.log('Current typing users:', Array.from(typingUsers));
-
-        // Update UI
-        updateTypingIndicator();
-
-        console.log('Typing notification processed:', {
-            username,
-            isTyping,
-            totalTypingUsers: typingUsers.size
-        });
-
-    } catch (error) {
-        console.error('Error processing typing notification:', error, response);
+    if (window.chatManager) {
+        window.chatManager.sendStopTyping();
     }
 }
 
-function updateTypingIndicator() {
-    try {
-        const indicator = document.getElementById('typingIndicator');
-        const textElement = document.getElementById('typingText');
-
-        if (!indicator || !textElement) {
-            console.warn('Typing indicator elements not found');
-            return;
-        }
-
-        if (typingUsers.size > 0) {
-            const userList = Array.from(typingUsers);
-            let typingText = '';
-
-            if (userList.length === 1) {
-                typingText = `${userList[0]} đang nhập`;
-            } else if (userList.length === 2) {
-                typingText = `${userList[0]} và ${userList[1]} đang nhập`;
-            } else {
-                typingText = `${userList.length} người đang nhập`;
-            }
-
-            textElement.textContent = typingText;
-            indicator.classList.add('show');
-
-            // Auto scroll when showing typing indicator
-            setTimeout(() => {
-                const container = document.getElementById('messagesContainer');
-                if (container) {
-                    const isAtBottom = container.scrollHeight - container.clientHeight <= container.scrollTop + 100;
-                    if (isAtBottom) {
-                        container.scrollTop = container.scrollHeight;
-                    }
-                }
-            }, 100);
-        } else {
-            indicator.classList.remove('show');
-        }
-    } catch (error) {
-        console.error('Error updating typing indicator:', error);
+// Message Input Event Handlers
+document.getElementById('messageInput').addEventListener('keypress', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
     }
-}
+});
 
+document.getElementById('messageInput').addEventListener('input', function () {
+    this.style.height = 'auto';
+    this.style.height = Math.min(this.scrollHeight, 120) + 'px';
 
-// Message reactions
+    if (window.chatManager) {
+        window.chatManager.handleTypingInput();
+    }
+});
+
+// Reaction Functions
 function showReactionPicker(messageId, event) {
-    event.stopPropagation();
-
-    const picker = document.getElementById('reactionPicker');
-    currentMessageForReaction = messageId;
-
-    picker.style.left = event.pageX + 'px';
-    picker.style.top = (event.pageY - 50) + 'px';
-    picker.classList.add('show');
+    if (window.messageManager) {
+        window.messageManager.showReactionPicker(messageId, event);
+    }
 }
 
 function addReaction(reactionType) {
-    if (!currentMessageForReaction) return;
-
-    const request = {
-        messageId: currentMessageForReaction,
-        type: reactionType
-    };
-
-    fetch(`/api/messages/${currentMessageForReaction}/reactions`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + authToken
-        },
-        body: JSON.stringify(request)
-    }).then(response => {
-        if (response.ok) {
-            loadMessageReactions(currentMessageForReaction);
-            hideReactionPicker();
-        }
-    }).catch(error => {
-        console.error('Error adding reaction:', error);
-    });
-}
-
-async function loadMessageReactions(messageId) {
-    try {
-        const response = await fetch(`/api/messages/${messageId}/reactions`, {
-            headers: {
-                'Authorization': 'Bearer ' + authToken
-            }
-        });
-
-        if (response.ok) {
-            const reactions = await response.json();
-            handleReactionUpdate({
-                messageId: messageId,
-                reactions: reactions
-            });
-        }
-    } catch (error) {
-        console.error('Error loading message reactions:', error);
+    if (window.messageManager) {
+        window.messageManager.addReaction(reactionType);
     }
 }
 
 function toggleReaction(messageId, reactionType) {
-    fetch(`/api/messages/${messageId}/reactions`, {
-        method: 'DELETE',
-        headers: {
-            'Authorization': 'Bearer ' + authToken
-        }
-    }).then(response => {
-        if (response.ok) {
-            console.log('Reaction removed successfully');
-        } else {
-            console.error('Failed to remove reaction');
-        }
-    }).catch(error => {
-        console.error('Error removing reaction:', error);
-    });
+    if (window.messageManager) {
+        window.messageManager.toggleReaction(messageId, reactionType);
+    }
 }
 
 function hideReactionPicker() {
-    document.getElementById('reactionPicker').classList.remove('show');
-    currentMessageForReaction = null;
-}
-
-function handleReactionUpdate(data) {
-    let messageId, reactions;
-
-    if (Array.isArray(data)) {
-        reactions = data;
-        messageId = currentMessageForReaction;
-    } else if (data.messageId && data.reactions) {
-        messageId = data.messageId;
-        reactions = data.reactions;
-    } else {
-        console.warn('Invalid reaction update data:', data);
-        return;
-    }
-
-    const reactionsContainer = document.getElementById(`reactions-${messageId}`);
-    if (reactionsContainer) {
-        reactionsContainer.innerHTML = `
-                ${renderReactions(reactions, messageId)}
-                <div class="add-reaction-btn" onclick="showReactionPicker('${messageId}', event)">➕</div>
-            `;
+    if (window.messageManager) {
+        window.messageManager.hideReactionPicker();
     }
 }
 
-// Message actions
-async function markMessageAsRead(messageId) {
-    try {
-        await fetch('/api/messages/read', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer ' + authToken
-            },
-            body: JSON.stringify({
-                messageId: messageId,
-                roomId: currentChatType === 'room' ? currentChatId : null,
-                conversationId: currentChatType === 'conversation' ? currentChatId : null
-            })
-        });
-    } catch (error) {
-        console.error('Error marking message as read:', error);
-    }
-}
-
-function editMessage(messageId, currentContent) {
-    const newContent = prompt('Chỉnh sửa tin nhắn:', currentContent);
-    if (newContent && newContent !== currentContent) {
-        fetch(`/api/messages/${messageId}`, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer ' + authToken
-            },
-            body: JSON.stringify(newContent)
-        }).then(response => {
-            if (response.ok) {
-                // Message will be updated via WebSocket
-            }
-        }).catch(error => {
-            console.error('Error editing message:', error);
-        });
-    }
-}
-
-// Modal functions
+// Modal Functions
 function showAddConversationModal() {
     document.getElementById('addConversationModal').classList.add('show');
     selectedUserId = null;
@@ -1356,7 +459,7 @@ function closeModal(modalId) {
     document.getElementById(modalId).classList.remove('show');
 }
 
-// Search functionality
+// Search Functions
 let searchTimeout;
 document.getElementById('userSearchInput').addEventListener('input', function () {
     clearTimeout(searchTimeout);
@@ -1388,7 +491,7 @@ async function searchUsers(keyword, resultContainerId) {
     try {
         const response = await fetch(`/api/users/search?keyword=${encodeURIComponent(keyword)}&page=0&size=20`, {
             headers: {
-                'Authorization': 'Bearer ' + authToken
+                'Authorization': 'Bearer ' + (window.authToken || window.authManager?.getAuthToken())
             }
         });
 
@@ -1412,15 +515,15 @@ function displayUserSearchResults(users, containerId) {
     }
 
     container.innerHTML = users.map(user => `
-            <div class="user-item" onclick="selectUser(${user.id}, '${user.fullName || user.username}', '${containerId}')">
-                <div class="user-item-avatar">${(user.fullName || user.username).charAt(0).toUpperCase()}</div>
-                <div class="user-item-info">
-                    <div class="user-item-name">${user.fullName || user.username}</div>
-                    <div class="user-item-username">@${user.username}</div>
-                </div>
-                ${user.isOnline ? '<div class="status-badge status-online">Online</div>' : '<div class="status-badge status-offline">Offline</div>'}
+        <div class="user-item" onclick="selectUser(${user.id}, '${user.fullName || user.username}', '${containerId}')">
+            <div class="user-item-avatar">${(user.fullName || user.username).charAt(0).toUpperCase()}</div>
+            <div class="user-item-info">
+                <div class="user-item-name">${user.fullName || user.username}</div>
+                <div class="user-item-username">@${user.username}</div>
             </div>
-        `).join('');
+            ${user.isOnline ? '<div class="status-badge status-online">Online</div>' : '<div class="status-badge status-offline">Offline</div>'}
+        </div>
+    `).join('');
 }
 
 function selectUser(userId, userName, containerId) {
@@ -1442,7 +545,7 @@ async function startConversation() {
         const response = await fetch(`/api/conversations/direct/${selectedUserId}`, {
             method: 'GET',
             headers: {
-                'Authorization': 'Bearer ' + authToken
+                'Authorization': 'Bearer ' + (window.authToken || window.authManager?.getAuthToken())
             }
         });
 
@@ -1477,7 +580,7 @@ async function createRoom() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': 'Bearer ' + authToken
+                'Authorization': 'Bearer ' + (window.authToken || window.authManager?.getAuthToken())
             },
             body: JSON.stringify({
                 name: name,
@@ -1514,7 +617,7 @@ async function sendFriendRequest(userId) {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': 'Bearer ' + authToken
+                'Authorization': 'Bearer ' + (window.authToken || window.authManager?.getAuthToken())
             },
             body: JSON.stringify({
                 contactId: userId
@@ -1534,7 +637,7 @@ async function sendFriendRequest(userId) {
     }
 }
 
-// File upload
+// File Upload Functions
 function selectFile() {
     document.getElementById('fileInput').click();
 }
@@ -1547,7 +650,13 @@ document.getElementById('fileInput').addEventListener('change', function (e) {
 });
 
 async function uploadFile(file) {
-    if (!file || !authToken) return;
+    if (!file) return;
+
+    const token = window.authToken || window.authManager?.getAuthToken();
+    if (!token) {
+        alert('Vui lòng đăng nhập để upload file');
+        return;
+    }
 
     if (file.size > 50 * 1024 * 1024) {
         alert('File quá lớn! Kích thước tối đa là 50MB.');
@@ -1561,7 +670,7 @@ async function uploadFile(file) {
         const response = await fetch('/api/files/upload', {
             method: 'POST',
             headers: {
-                'Authorization': 'Bearer ' + authToken
+                'Authorization': 'Bearer ' + token
             },
             body: formData
         });
@@ -1575,10 +684,12 @@ async function uploadFile(file) {
                 fileUploadId: fileMessage.id
             };
 
-            if (currentChatType === 'room') {
-                stompClient.send(`/app/chat/room/${currentChatId}`, {}, JSON.stringify(chatMessage));
-            } else if (currentChatType === 'conversation') {
-                stompClient.send(`/app/chat/conversation/${currentChatId}`, {}, JSON.stringify(chatMessage));
+            // Send via WebSocket
+            if (window.wsManager && window.chatManager) {
+                const chatInfo = window.chatManager.getCurrentChatInfo();
+                if (chatInfo.type && chatInfo.id) {
+                    window.wsManager.sendMessage(chatInfo.type, chatInfo.id, chatMessage);
+                }
             }
 
             document.getElementById('fileInput').value = '';
@@ -1592,7 +703,7 @@ async function uploadFile(file) {
     }
 }
 
-// Utility functions
+// Utility Functions
 function formatTime(dateString) {
     if (!dateString) return '';
 
@@ -1629,31 +740,7 @@ function showChatInfo() {
     alert('Tính năng thông tin chat đang được phát triển');
 }
 
-// Event listeners
-document.getElementById('messageInput').addEventListener('keypress', function (e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage();
-    }
-});
-
-document.getElementById('messageInput').addEventListener('input', function () {
-    this.style.height = 'auto';
-    this.style.height = Math.min(this.scrollHeight, 120) + 'px';
-
-    if (!connected) return;
-
-    if (!isCurrentlyTyping) {
-        sendTyping();
-        isCurrentlyTyping = true;
-    }
-
-    clearTimeout(typingTimer);
-    typingTimer = setTimeout(() => {
-        sendStopTyping();
-    }, 1500);
-});
-
+// Event Listeners
 document.addEventListener('click', function (e) {
     if (!e.target.closest('.reaction-picker') && !e.target.closest('.add-reaction-btn')) {
         hideReactionPicker();
@@ -1668,30 +755,25 @@ document.querySelectorAll('.modal').forEach(modal => {
     });
 });
 
-// Initialize app
-function initializeApp() {
-    const storedToken = localStorage.getItem('authToken');
-    const storedRefreshToken = localStorage.getItem('refreshToken');
-    const storedUser = localStorage.getItem('currentUser');
+// Page Unload Handler
+window.addEventListener('beforeunload', function () {
+    if (window.chatManager) {
+        window.chatManager.leaveCurrentChat();
+    }
+    if (window.wsManager) {
+        window.wsManager.disconnect();
+    }
+});
 
-    if (storedToken && storedRefreshToken && storedUser) {
-        try {
-            authToken = storedToken;
-            refreshToken = storedRefreshToken;
-            currentUser = JSON.parse(storedUser);
+// Application Initialization
+async function initializeApp() {
+    console.log('🚀 Initializing Fixed Chat Application...');
 
-            document.getElementById('currentUsername').textContent = currentUser.fullName || currentUser.username;
-            document.getElementById('userAvatar').textContent = (currentUser.fullName || currentUser.username).charAt(0).toUpperCase();
-            document.getElementById('userRole').textContent = 'Thành viên';
-
-            document.getElementById('authModal').classList.add('hidden');
-            document.getElementById('chatContainer').classList.remove('hidden');
-
-            connectWebSocket();
-            loadInitialData();
-        } catch (error) {
-            console.error('Error parsing stored user data:', error);
-            logout();
+    // Initialize from stored credentials
+    if (window.authManager) {
+        const initialized = await window.authManager.initializeFromStorage();
+        if (!initialized) {
+            console.log('No stored credentials found');
         }
     }
 }
@@ -1701,127 +783,4 @@ document.addEventListener('DOMContentLoaded', function () {
     initializeApp();
 });
 
-// Periodic token refresh (every 20 minutes)
-setInterval(() => {
-    if (refreshToken && authToken) {
-        refreshAuthToken();
-    }
-}, 20 * 60 * 1000);
-
-console.log('🚀 Fixed Chat Application with Proper Scrolling initialized');
-
-class MessageVisibilityTracker {
-    constructor() {
-        this.observer = null;
-        this.visibilityTimeouts = new Map();
-        this.trackedMessages = new Set();
-        this.currentUserId = window.currentUserId; // Lấy từ global variable
-
-        this.init();
-    }
-
-    init() {
-        if (!window.IntersectionObserver) {
-            console.warn('IntersectionObserver not supported');
-            return;
-        }
-
-        this.observer = new IntersectionObserver((entries) => {
-            entries.forEach(entry => this.handleVisibilityChange(entry));
-        }, {
-            threshold: 0.5,
-            rootMargin: '0px 0px -50px 0px'
-        });
-
-        this.observeExistingMessages();
-    }
-
-    handleVisibilityChange(entry) {
-        const messageElement = entry.target;
-        const messageId = messageElement.dataset.messageId;
-        const senderId = messageElement.dataset.senderId;
-        const isVisible = entry.isIntersecting;
-
-        // Chỉ track messages từ người khác
-        if (!messageId || !senderId || !currentUser || senderId === currentUser.id.toString()) {
-            return;
-        }
-
-        // Clear existing timeout
-        if (this.visibilityTimeouts.has(messageId)) {
-            clearTimeout(this.visibilityTimeouts.get(messageId));
-        }
-
-        // Debounce visibility updates
-        const timeout = setTimeout(() => {
-            this.sendVisibilityUpdate(messageId, isVisible);
-        }, 300);
-
-        this.visibilityTimeouts.set(messageId, timeout);
-    }
-
-    sendVisibilityUpdate(messageId, visible) {
-        if (window.stompClient && window.stompClient.connected) {
-            window.stompClient.send("/app/message/visibility", {}, JSON.stringify({
-                messageId: messageId,
-                visible: visible
-            }));
-
-            console.debug(`Message visibility updated: ${messageId} - ${visible ? 'visible' : 'hidden'}`);
-        }
-    }
-
-    observeExistingMessages() {
-        if (!this.observer) return;
-
-        document.querySelectorAll('.message[data-message-id]').forEach(messageEl => {
-            const messageId = messageEl.dataset.messageId;
-            if (!this.trackedMessages.has(messageId)) {
-                this.observer.observe(messageEl);
-                this.trackedMessages.add(messageId);
-            }
-        });
-    }
-
-    observeNewMessage(messageElement) {
-        if (!this.observer || !messageElement) return;
-
-        const messageId = messageElement.dataset.messageId;
-        if (messageId && !this.trackedMessages.has(messageId)) {
-            this.observer.observe(messageElement);
-            this.trackedMessages.add(messageId);
-        }
-    }
-
-    cleanup() {
-        if (this.observer) {
-            this.observer.disconnect();
-        }
-        this.visibilityTimeouts.forEach(timeout => clearTimeout(timeout));
-        this.visibilityTimeouts.clear();
-        this.trackedMessages.clear();
-    }
-}
-
-// Initialize visibility tracker
-let messageVisibilityTracker;
-
-document.addEventListener('DOMContentLoaded', () => {
-    messageVisibilityTracker = new MessageVisibilityTracker();
-});
-
-// Cleanup on page unload
-window.addEventListener('beforeunload', () => {
-    if (messageVisibilityTracker) {
-        messageVisibilityTracker.cleanup();
-    }
-});
-
-document.getElementById('messagesContainer').addEventListener('scroll', function() {
-    isUserActiveInChat = true;
-
-    clearTimeout(scrollTimeout);
-    scrollTimeout = setTimeout(() => {
-        isUserActiveInChat = false;
-    }, 2000); // User inactive after 2 seconds of no scrolling
-});
+console.log('🚀 Fixed Chat Application with Modular Architecture initialized');

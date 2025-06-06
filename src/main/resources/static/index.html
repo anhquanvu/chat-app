@@ -8,7 +8,147 @@
     <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/stompjs@2/lib/stomp.min.js"></script>
 
-    <link href="css/style.css" rel="stylesheet"/></head>
+    <link href="css/style.css" rel="stylesheet"/>
+
+    <!-- Add CSS for new components -->
+    <style>
+        .temp-notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #667eea;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 9999;
+            opacity: 0;
+            transform: translateX(100%);
+            transition: all 0.3s ease;
+        }
+
+        .temp-notification.show {
+            opacity: 1;
+            transform: translateX(0);
+        }
+
+        .scroll-loading-message {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 15px 25px;
+            border-radius: 8px;
+            z-index: 9999;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .scroll-loading-message.show {
+            opacity: 1;
+        }
+
+        .pinned-messages-container {
+            background: #f8f9fa;
+            border-bottom: 1px solid #dee2e6;
+            flex-shrink: 0;
+        }
+
+        .pinned-messages-header {
+            padding: 10px 15px;
+            background: #e9ecef;
+            border-bottom: 1px solid #dee2e6;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 500;
+        }
+
+        .toggle-pinned-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .pinned-messages-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .pinned-message-item {
+            padding: 10px 15px;
+            border-bottom: 1px solid #f0f0f0;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .pinned-message-item:hover {
+            background: #f0f0f0;
+        }
+
+        .pinned-message-content {
+            font-size: 14px;
+            margin-bottom: 5px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .pinned-message-info {
+            font-size: 12px;
+            color: #666;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .goto-message-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            cursor: pointer;
+        }
+
+        .goto-message-btn:hover {
+            background: #5a67d8;
+        }
+
+        .message-pinned-indicator {
+            background: #fff3cd;
+            color: #856404;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            margin-bottom: 5px;
+            border-left: 3px solid #ffc107;
+        }
+
+        .highlighted-message {
+            animation: highlight 2s ease-in-out;
+        }
+
+        @keyframes highlight {
+            0%, 100% { background: transparent; }
+            50% { background: rgba(255, 255, 0, 0.3); }
+        }
+
+        .status-updated {
+            animation: statusUpdate 1s ease-in-out;
+        }
+
+        @keyframes statusUpdate {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.02); }
+        }
+    </style>
+</head>
 <body>
 <!-- Authentication Modal -->
 <div class="auth-modal" id="authModal">
@@ -61,6 +201,7 @@
         </form>
     </div>
 </div>
+
 <!-- Main Chat Interface -->
 <div class="container hidden" id="chatContainer">
     <div class="chat-header">
@@ -134,6 +275,7 @@
                         <button class="action-btn" onclick="showChatInfo()">ℹ️ Thông tin</button>
                     </div>
                 </div>
+                <!-- Pinned messages will be inserted here dynamically -->
                 <div class="messages-container" id="messagesContainer" style="flex: 1; overflow-y: auto; min-height: 0;">
                     <div class="messages-wrapper" id="messagesWrapper">
                         <!-- Messages will be injected here -->
@@ -155,6 +297,7 @@
         </div>
     </div>
 </div>
+
 <!-- Add Conversation Modal -->
 <div class="modal" id="addConversationModal">
     <div class="modal-content">
@@ -173,6 +316,7 @@
         </div>
     </div>
 </div>
+
 <!-- Create Room Modal -->
 <div class="modal" id="createRoomModal">
     <div class="modal-content">
@@ -200,6 +344,7 @@
         </div>
     </div>
 </div>
+
 <!-- Add Contact Modal -->
 <div class="modal" id="addContactModal">
     <div class="modal-content">
@@ -215,6 +360,7 @@
         </div>
     </div>
 </div>
+
 <!-- Reaction Picker -->
 <div class="reaction-picker" id="reactionPicker">
     <div class="reaction-option" onclick="addReaction('LIKE')">👍</div>
@@ -225,6 +371,13 @@
     <div class="reaction-option" onclick="addReaction('WOW')">😮</div>
 </div>
 
-<script src="js/app.js"></script></body>
-<script src="js/pin.js"></script></body>
+<!-- Load JavaScript modules in correct order -->
+<script src="js/websocket-manager.js"></script>
+<script src="js/auth-manager.js"></script>
+<script src="js/chat-manager.js"></script>
+<script src="js/message-manager.js"></script>
+<script src="js/pin-manager.js"></script>
+<script src="js/visibility-tracker.js"></script>
+<script src="js/app.js"></script>
+</body>
 </html>
