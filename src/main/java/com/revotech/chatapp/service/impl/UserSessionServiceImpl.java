@@ -1,46 +1,69 @@
 package com.revotech.chatapp.service.impl;
 
+import com.revotech.chatapp.model.dto.OnlineUser;
 import com.revotech.chatapp.model.entity.User;
 import com.revotech.chatapp.repository.UserRepository;
 import com.revotech.chatapp.service.UserSessionService;
+import com.revotech.chatapp.util.WebSocketSafeBroadcast;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
+import jakarta.annotation.PostConstruct;
 import java.time.LocalDateTime;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @Service
+@RequiredArgsConstructor
 @Slf4j
 public class UserSessionServiceImpl implements UserSessionService {
+
+    private static final String ONLINE_USERS_KEY = "chat:online_users";
+    private static final String USER_SESSIONS_KEY = "chat:user_sessions:";
+    private static final String SESSION_INFO_KEY = "chat:session_info:";
+    private static final int SESSION_TIMEOUT = 30; // minutes
+
+    private final UserRepository userRepository;
+    private final WebSocketSafeBroadcast safeBroadcast;
 
     @Autowired(required = false)
     private RedisTemplate<String, Object> redisTemplate;
 
-    private final UserRepository userRepository;
-
-    // In-memory storage when Redis is not available
-    private final Map<Long, Set<String>> userSessionsMap = new ConcurrentHashMap<>();
+    // Fallback in-memory storage
     private final Set<Long> onlineUsers = ConcurrentHashMap.newKeySet();
+    private final Map<Long, Set<String>> userSessionsMap = new ConcurrentHashMap<>();
     private final Map<String, SessionInfo> sessionInfoMap = new ConcurrentHashMap<>();
 
-    private static final String USER_SESSIONS_KEY = "user:sessions:";
-    private static final String ONLINE_USERS_KEY = "online:users";
-    private static final String SESSION_INFO_KEY = "session:info:";
-    private static final long SESSION_TIMEOUT = 30; // minutes
+    // Cache user info for broadcasting
+    private final Map<Long, String> userIdToUsernameCache = new ConcurrentHashMap<>();
 
-    public UserSessionServiceImpl(UserRepository userRepository) {
-        this.userRepository = userRepository;
-        log.info("UserSessionService initialized - Redis available: {}", redisTemplate != null);
+    @PostConstruct
+    public void init() {
+        log.info("UserSessionService initialized with Redis: {}", redisTemplate != null);
+        loadUserCache();
+    }
+
+    private void loadUserCache() {
+        try {
+            List<User> users = userRepository.findAll();
+            users.forEach(user -> {
+                userIdToUsernameCache.put(user.getId(), user.getUsername());
+            });
+            log.info("Loaded {} users into cache for broadcasting", users.size());
+        } catch (Exception e) {
+            log.error("Failed to load user cache", e);
+        }
     }
 
     @Override
     public void markUserOnline(Long userId, String sessionId) {
+        String username = getUsernameFromCache(userId);
+
         if (redisTemplate != null) {
             String userSessionsKey = USER_SESSIONS_KEY + userId;
             String sessionInfoKey = SESSION_INFO_KEY + sessionId;
@@ -66,11 +89,17 @@ public class UserSessionServiceImpl implements UserSessionService {
         // Update user status in database
         updateUserOnlineStatus(userId, true);
 
-        log.debug("User {} marked as online with session {}", userId, sessionId);
+        // CRITICAL: Broadcast user online status immediately
+        broadcastUserStatusChange(userId, username, "ONLINE", sessionId);
+
+        log.info("✅ User {} marked as online with session {} and broadcasted", username, sessionId);
     }
 
     @Override
     public void markUserOffline(Long userId, String sessionId) {
+        String username = getUsernameFromCache(userId);
+        boolean shouldBroadcastOffline = false;
+
         if (redisTemplate != null) {
             String userSessionsKey = USER_SESSIONS_KEY + userId;
             String sessionInfoKey = SESSION_INFO_KEY + sessionId;
@@ -86,6 +115,7 @@ public class UserSessionServiceImpl implements UserSessionService {
                 // No more active sessions, mark user as offline
                 redisTemplate.opsForSet().remove(ONLINE_USERS_KEY, userId.toString());
                 updateUserOnlineStatus(userId, false);
+                shouldBroadcastOffline = true;
             }
         } else {
             // In-memory processing
@@ -97,13 +127,63 @@ public class UserSessionServiceImpl implements UserSessionService {
                 if (sessions.isEmpty()) {
                     onlineUsers.remove(userId);
                     updateUserOnlineStatus(userId, false);
+                    shouldBroadcastOffline = true;
                 }
             }
+        }
+
+        // CRITICAL: Only broadcast offline if no other active sessions
+        if (shouldBroadcastOffline) {
+            broadcastUserStatusChange(userId, username, "OFFLINE", sessionId);
+            log.info("✅ User {} marked as offline and broadcasted (no more sessions)", username);
+        } else {
+            log.info("User {} still has other active sessions, not broadcasting offline", username);
         }
 
         log.debug("User {} session {} marked as offline", userId, sessionId);
     }
 
+    // CRITICAL: Broadcast user status changes
+    private void broadcastUserStatusChange(Long userId, String username, String status, String sessionId) {
+        try {
+            OnlineUser userStatus = OnlineUser.builder()
+                    .userId(userId)
+                    .username(username)
+                    .status(status)
+                    .sessionId(sessionId)
+                    .timestamp(System.currentTimeMillis())
+                    .updatedAt(LocalDateTime.now())
+                    .build();
+
+            // Broadcast to ALL connected users
+            safeBroadcast.safeConvertAndSend("/topic/user-status", userStatus);
+
+            log.info("🚀 Broadcasted user status: {} is now {}", username, status);
+
+        } catch (Exception e) {
+            log.error("Failed to broadcast user status change for user {}", username, e);
+        }
+    }
+
+    private String getUsernameFromCache(Long userId) {
+        String username = userIdToUsernameCache.get(userId);
+        if (username == null) {
+            // Fallback: query database and update cache
+            try {
+                Optional<User> userOpt = userRepository.findById(userId);
+                if (userOpt.isPresent()) {
+                    username = userOpt.get().getUsername();
+                    userIdToUsernameCache.put(userId, username);
+                } else {
+                    username = "unknown_user_" + userId;
+                }
+            } catch (Exception e) {
+                log.error("Failed to get username for userId {}", userId, e);
+                username = "unknown_user_" + userId;
+            }
+        }
+        return username;
+    }
 
     @Override
     public boolean isUserOnline(Long userId) {
@@ -129,7 +209,7 @@ public class UserSessionServiceImpl implements UserSessionService {
                     .collect(Collectors.toSet());
         } else {
             Set<String> sessions = userSessionsMap.get(userId);
-            return sessions != null ? sessions : Set.of();
+            return sessions != null ? new HashSet<>(sessions) : Set.of();
         }
     }
 
@@ -140,39 +220,36 @@ public class UserSessionServiceImpl implements UserSessionService {
 
     @Override
     public void removeAllUserSessions(Long userId) {
+        String username = getUsernameFromCache(userId);
+
         if (redisTemplate != null) {
             String userSessionsKey = USER_SESSIONS_KEY + userId;
-
-            // Get all sessions for cleanup
             Set<Object> sessions = redisTemplate.opsForSet().members(userSessionsKey);
+
             if (sessions != null) {
-                for (Object sessionObj : sessions) {
-                    String sessionId = sessionObj.toString();
-                    String sessionInfoKey = SESSION_INFO_KEY + sessionId;
+                for (Object session : sessions) {
+                    String sessionInfoKey = SESSION_INFO_KEY + session.toString();
                     redisTemplate.delete(sessionInfoKey);
                 }
             }
 
-            // Remove all sessions
             redisTemplate.delete(userSessionsKey);
-            // Remove from online users
             redisTemplate.opsForSet().remove(ONLINE_USERS_KEY, userId.toString());
         } else {
-            // In-memory processing
             Set<String> sessions = userSessionsMap.get(userId);
             if (sessions != null) {
-                for (String sessionId : sessions) {
-                    sessionInfoMap.remove(sessionId);
-                }
+                sessions.forEach(sessionInfoMap::remove);
+                sessions.clear();
             }
-            userSessionsMap.remove(userId);
             onlineUsers.remove(userId);
         }
 
-        // Update user status in database
         updateUserOnlineStatus(userId, false);
 
-        log.info("All sessions removed for user {}", userId);
+        // Broadcast offline status
+        broadcastUserStatusChange(userId, username, "OFFLINE", "all_sessions_removed");
+
+        log.info("✅ All sessions removed for user {} and offline status broadcasted", username);
     }
 
     @Override
@@ -187,18 +264,16 @@ public class UserSessionServiceImpl implements UserSessionService {
     @Override
     public Set<Long> getOnlineUserIds() {
         if (redisTemplate != null) {
-            Set<Object> redisOnlineUsers = redisTemplate.opsForSet().members(ONLINE_USERS_KEY);
-
-            if (redisOnlineUsers == null) {
+            Set<Object> onlineUserIds = redisTemplate.opsForSet().members(ONLINE_USERS_KEY);
+            if (onlineUserIds == null) {
                 return Set.of();
             }
 
-            return redisOnlineUsers.stream()
-                    .map(Object::toString)
-                    .map(Long::valueOf)
+            return onlineUserIds.stream()
+                    .map(id -> Long.valueOf(id.toString()))
                     .collect(Collectors.toSet());
         } else {
-            return Set.copyOf(onlineUsers);
+            return new HashSet<>(onlineUsers);
         }
     }
 
@@ -206,47 +281,55 @@ public class UserSessionServiceImpl implements UserSessionService {
         try {
             userRepository.findById(userId).ifPresent(user -> {
                 user.setIsOnline(isOnline);
-                if (isOnline) {
-                    user.setLastLogin(LocalDateTime.now());
-                } else {
-                    user.setLastSeen(LocalDateTime.now());
-                }
+                user.setLastSeen(LocalDateTime.now());
                 userRepository.save(user);
             });
         } catch (Exception e) {
-            log.error("Error updating user online status for user {}", userId, e);
+            log.error("Failed to update user online status in database for user {}", userId, e);
         }
     }
 
-    /**
-     * Session information class
-     */
-    public static class SessionInfo {
-        private Long userId;
-        private String sessionId;
-        private LocalDateTime createdAt;
-        private LocalDateTime lastHeartbeat;
+    // Cleanup method for expired sessions
+    public void cleanupExpiredSessions() {
+        try {
+            if (redisTemplate != null) {
+                Set<Object> onlineUserIds = redisTemplate.opsForSet().members(ONLINE_USERS_KEY);
+                if (onlineUserIds != null) {
+                    for (Object userIdObj : onlineUserIds) {
+                        Long userId = Long.valueOf(userIdObj.toString());
+                        String userSessionsKey = USER_SESSIONS_KEY + userId;
 
-        public SessionInfo() {}
+                        Set<Object> sessions = redisTemplate.opsForSet().members(userSessionsKey);
+                        if (sessions == null || sessions.isEmpty()) {
+                            // No sessions but still marked as online - cleanup
+                            String username = getUsernameFromCache(userId);
+                            redisTemplate.opsForSet().remove(ONLINE_USERS_KEY, userId.toString());
+                            updateUserOnlineStatus(userId, false);
+                            broadcastUserStatusChange(userId, username, "OFFLINE", "session_cleanup");
+                            log.info("Cleaned up orphaned online status for user {}", username);
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.error("Failed to cleanup expired sessions", e);
+        }
+    }
+
+    // Inner class
+    private static class SessionInfo {
+        private final Long userId;
+        private final String sessionId;
+        private final LocalDateTime createdAt;
 
         public SessionInfo(Long userId, String sessionId, LocalDateTime createdAt) {
             this.userId = userId;
             this.sessionId = sessionId;
             this.createdAt = createdAt;
-            this.lastHeartbeat = createdAt;
         }
 
-        // Getters and setters
         public Long getUserId() { return userId; }
-        public void setUserId(Long userId) { this.userId = userId; }
-
         public String getSessionId() { return sessionId; }
-        public void setSessionId(String sessionId) { this.sessionId = sessionId; }
-
         public LocalDateTime getCreatedAt() { return createdAt; }
-        public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
-
-        public LocalDateTime getLastHeartbeat() { return lastHeartbeat; }
-        public void setLastHeartbeat(LocalDateTime lastHeartbeat) { this.lastHeartbeat = lastHeartbeat; }
     }
 }

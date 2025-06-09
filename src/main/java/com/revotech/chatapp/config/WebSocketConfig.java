@@ -24,6 +24,7 @@ import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBr
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
 
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
 
 @Configuration
@@ -35,26 +36,19 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private final JwtTokenUtil jwtTokenUtil;
     private final UserDetailsService userDetailsService;
 
-    @Value("${app.websocket.allowed-origins}")
+    @Value("${app.websocket.allowed-origins:http://localhost:8080}")
     private String[] allowedOrigins;
+
+    // CRITICAL FIX: Store session data để persist qua events
+    private final Map<String, Map<String, Object>> sessionDataStore = new ConcurrentHashMap<>();
 
     @Override
     public void configureMessageBroker(MessageBrokerRegistry config) {
-        config.enableSimpleBroker("/topic", "/user")
-                .setHeartbeatValue(new long[]{25000, 25000})
-                .setTaskScheduler(taskScheduler());
+        config.enableSimpleBroker("/topic", "/queue")
+                .setTaskScheduler(heartBeatScheduler())
+                .setHeartbeatValue(new long[]{10000, 10000});
         config.setApplicationDestinationPrefixes("/app");
         config.setUserDestinationPrefix("/user");
-    }
-
-    @Bean
-    public TaskScheduler taskScheduler() {
-        ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
-        scheduler.setPoolSize(10);
-        scheduler.setThreadNamePrefix("websocket-heartbeat-");
-        scheduler.setWaitForTasksToCompleteOnShutdown(true);
-        scheduler.setAwaitTerminationSeconds(30);
-        return scheduler;
     }
 
     @Override
@@ -62,7 +56,8 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         registry.addEndpoint("/ws")
                 .setAllowedOrigins(allowedOrigins)
                 .withSockJS()
-                .setHeartbeatTime(25000); // 25 giây heartbeat cho SockJS
+                .setSessionCookieNeeded(false)
+                .setHeartbeatTime(25000);
     }
 
     @Override
@@ -72,8 +67,57 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
             public Message<?> preSend(Message<?> message, MessageChannel channel) {
                 StompHeaderAccessor accessor = MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
 
-                if (StompCommand.CONNECT.equals(accessor.getCommand())) {
-                    return handleConnectionAuthentication(accessor, message);
+                if (accessor != null && StompCommand.CONNECT.equals(accessor.getCommand())) {
+                    String sessionId = accessor.getSessionId();
+                    log.debug("Processing CONNECT for session: {}", sessionId);
+
+                    try {
+                        String authHeader = accessor.getFirstNativeHeader("Authorization");
+                        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+                            String token = authHeader.substring(7);
+
+                            if (jwtTokenUtil.validateToken(token)) {
+                                String username = jwtTokenUtil.getUsernameFromToken(token);
+
+                                var userDetails = userDetailsService.loadUserByUsername(username);
+                                var auth = new UsernamePasswordAuthenticationToken(
+                                        userDetails, null, userDetails.getAuthorities());
+
+                                SecurityContextHolder.getContext().setAuthentication(auth);
+                                accessor.setUser(auth);
+
+                                Long userId = ((UserPrincipal) userDetails).getId();
+
+                                // CRITICAL FIX: Store session data persistently
+                                Map<String, Object> sessionData = new ConcurrentHashMap<>();
+                                sessionData.put("username", username);
+                                sessionData.put("userId", userId);
+                                sessionDataStore.put(sessionId, sessionData);
+
+                                // ALSO set on accessor for immediate use
+                                Map<String, Object> sessionAttributes = accessor.getSessionAttributes();
+                                if (sessionAttributes == null) {
+                                    sessionAttributes = new ConcurrentHashMap<>();
+                                    accessor.setSessionAttributes(sessionAttributes);
+                                }
+                                sessionAttributes.putAll(sessionData);
+
+                                log.info("✅ WebSocket authenticated user: {} with ID: {} for session: {}",
+                                        username, userId, sessionId);
+
+                            } else {
+                                log.warn("Invalid JWT token for session: {}", sessionId);
+                                throw new org.springframework.security.authentication.AuthenticationCredentialsNotFoundException("Invalid JWT token");
+                            }
+                        } else {
+                            log.warn("No Authorization header for session: {}", sessionId);
+                            throw new org.springframework.security.authentication.AuthenticationCredentialsNotFoundException("Missing authorization header");
+                        }
+
+                    } catch (Exception e) {
+                        log.error("WebSocket authentication failed for session {}: {}", sessionId, e.getMessage());
+                        throw new org.springframework.security.authentication.AuthenticationCredentialsNotFoundException("Authentication failed: " + e.getMessage());
+                    }
                 }
 
                 return message;
@@ -81,48 +125,23 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         });
     }
 
-    private Message<?> handleConnectionAuthentication(StompHeaderAccessor accessor, Message<?> message) {
-        String sessionId = accessor.getSessionId();
+    // CRITICAL: Add method to get session data
+    public Map<String, Object> getSessionData(String sessionId) {
+        return sessionDataStore.get(sessionId);
+    }
 
-        try {
-            String authToken = accessor.getFirstNativeHeader("Authorization");
+    // CRITICAL: Add method to remove session data on disconnect
+    public void removeSessionData(String sessionId) {
+        sessionDataStore.remove(sessionId);
+    }
 
-            if (authToken != null && authToken.startsWith("Bearer ")) {
-                String token = authToken.substring(7);
-
-                if (jwtTokenUtil.validateToken(token)) {
-                    String username = jwtTokenUtil.getUsernameFromToken(token);
-
-                    var userDetails = userDetailsService.loadUserByUsername(username);
-                    var auth = new UsernamePasswordAuthenticationToken(
-                            userDetails, null, userDetails.getAuthorities());
-
-                    SecurityContextHolder.getContext().setAuthentication(auth);
-                    accessor.setUser(auth);
-
-                    Map<String, Object> sessionAttributes = accessor.getSessionAttributes();
-                    if (sessionAttributes != null) {
-                        sessionAttributes.put("username", username);
-                        sessionAttributes.put("userId", ((UserPrincipal) userDetails).getId());
-
-                        log.info("WebSocket authenticated user: {} with ID: {} for session: {}",
-                                username, ((UserPrincipal) userDetails).getId(), sessionId);
-                    } else {
-                        log.warn("Session attributes is null during authentication for user: {} session: {}", username, sessionId);
-                    }
-                } else {
-                    log.warn("Invalid JWT token received for session: {}", sessionId);
-                    throw new org.springframework.security.authentication.AuthenticationCredentialsNotFoundException("Invalid JWT token");
-                }
-            } else {
-                log.warn("No Authorization header found for session: {}", sessionId);
-                throw new org.springframework.security.authentication.AuthenticationCredentialsNotFoundException("Missing authorization header");
-            }
-        } catch (Exception e) {
-            log.error("WebSocket authentication failed for session {}: {}", sessionId, e.getMessage());
-            throw new org.springframework.security.authentication.AuthenticationCredentialsNotFoundException("Authentication failed: " + e.getMessage());
-        }
-
-        return message;
+    @Bean
+    public TaskScheduler heartBeatScheduler() {
+        ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
+        scheduler.setPoolSize(1);
+        scheduler.setThreadNamePrefix("websocket-heartbeat-");
+        scheduler.setDaemon(true);
+        scheduler.initialize();
+        return scheduler;
     }
 }

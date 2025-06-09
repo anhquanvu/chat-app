@@ -183,8 +183,8 @@ logging:
     com.zaxxer.hikari.HikariDataSource: INFO
     org.hibernate.engine.jdbc.env.internal.LobCreatorBuilderImpl: WARN
     org.hibernate.orm.connections.pooling: INFO
-    org.hibernate.SQL: DEBUG
-    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+    org.hibernate.SQL: OFF
+    org.hibernate.type.descriptor.sql.BasicBinder: OFF
     # Security Logging
     org.springframework.security: DEBUG
     com.revotech.chatapp.security: DEBUG

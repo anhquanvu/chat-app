@@ -1226,3 +1226,96 @@ body {
         -webkit-line-clamp: 1;
     }
 }
+
+/* style online offline */
+/* THÊM VÀO style.css */
+
+/* User Online/Offline Status Styles */
+.user-online {
+    border-left: 3px solid #28a745;
+    background: linear-gradient(90deg, rgba(40, 167, 69, 0.1) 0%, transparent 100%);
+}
+
+.user-offline {
+    border-left: 3px solid transparent;
+    background: transparent;
+}
+
+.user-online .item-name {
+    font-weight: 600;
+    color: #155724;
+}
+
+.user-offline .item-name {
+    color: #6c757d;
+    font-weight: normal;
+}
+
+.online-indicator {
+    width: 10px;
+    height: 10px;
+    background-color: #28a745;
+    border-radius: 50%;
+    border: 2px solid #fff;
+    box-shadow: 0 0 0 1px #28a745;
+    animation: pulse-online 2s infinite;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
+@keyframes pulse-online {
+    0% {
+        box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.7);
+    }
+    70% {
+        box-shadow: 0 0 0 10px rgba(40, 167, 69, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(40, 167, 69, 0);
+    }
+}
+
+.online-dot {
+    color: #28a745;
+    font-weight: bold;
+    margin-left: 5px;
+    font-size: 1.2em;
+    animation: pulse-dot 2s infinite;
+}
+
+@keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.status-badge {
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.7em;
+    font-weight: 500;
+    text-transform: uppercase;
+}
+
+.status-online {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.status-offline {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+.chat-user-status {
+    font-size: 0.8em;
+    margin-left: 10px;
+    font-weight: 500;
+}
+
+.chat-user-status.online {
+    color: #28a745;
+}
+
+.chat-user-status.offline {
+    color: #6c757d;
+}
