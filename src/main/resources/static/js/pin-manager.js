@@ -220,31 +220,20 @@ class PinManager {
     }
 
     async scrollToMessage(messageId) {
-        let messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
-
+        const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
         if (messageElement) {
-            this.scrollToExistingMessage(messageElement);
-            return;
-        }
+            messageElement.scrollIntoView({
+                behavior: 'smooth',
+                block: 'center'
+            });
 
-        try {
-            this.showLoadingMessage('Đang tìm tin nhắn...');
-
-            const pageInfo = await this.getMessagePageInfo(messageId);
-            await this.loadMessagePage(pageInfo);
-
-            messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
-            if (messageElement) {
-                this.scrollToExistingMessage(messageElement);
-            } else {
-                this.hideLoadingMessage();
-                this.showNotification('Không thể cuộn đến tin nhắn');
-            }
-
-        } catch (error) {
-            console.error('Error finding message:', error);
-            this.hideLoadingMessage();
-            this.showNotification('Lỗi khi tìm tin nhắn: ' + error.message);
+            // Highlight message
+            messageElement.classList.add('highlighted-message');
+            setTimeout(() => {
+                messageElement.classList.remove('highlighted-message');
+            }, 2000);
+        } else {
+            console.log('Message not found in current view');
         }
     }
 

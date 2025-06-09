@@ -180,6 +180,7 @@ public class MessageServiceImpl implements MessageService {
 
     @Override
     public ChatMessage sendMessageToConversation(SendMessageRequest request, Long senderId) {
+        log.debug("Entering sendMessageToConversation with full request data: {}", request);
         if (request.getConversationId() == null) {
             throw new AppException("Conversation ID is required");
         }
@@ -207,12 +208,18 @@ public class MessageServiceImpl implements MessageService {
                 .build();
 
         if (request.getReplyToId() != null) {
-            Message replyToMessage = messageRepository.findByMessageId(request.getReplyToId())
-                    .orElseThrow(() -> new AppException("Reply message not found"));
-            message.setReplyTo(replyToMessage);
+            log.debug("Searching for replyToId: {}", request.getReplyToId());
+            Optional<Message> replyToMessageOpt = messageRepository.findByMessageId(request.getReplyToId());
+            if (replyToMessageOpt.isPresent()) {
+                Message replyToMessage = replyToMessageOpt.get();
+                log.info("Found replyToMessage with id: {}, messageId: {}", replyToMessage.getId(), replyToMessage.getMessageId());
+                message.setReplyTo(replyToMessage);
+            } else {
+                log.warn("Reply message not found for replyToId: {}", request.getReplyToId());
+            }
         }
-
         message = messageRepository.save(message);
+        log.debug("Saved message with id: {}, replyToId: {}", message.getId(), message.getReplyTo() != null ? message.getReplyTo().getId() : null);
 
         // Update conversation
         conversation.setLastMessageAt(LocalDateTime.now());

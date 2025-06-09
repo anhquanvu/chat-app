@@ -208,16 +208,28 @@ class ChatManager {
             return;
         }
 
-        const chatMessage = {
+        // Tạo message object với reply data nếu có
+        let chatMessage = {
             content: messageContent,
             type: 'CHAT'
         };
+
+        // Thêm reply data nếu đang reply
+        if (window.messageManager && window.messageManager.replyingToMessage) {
+            chatMessage.replyToId = window.messageManager.replyingToMessage.id;
+        }
 
         const success = window.wsManager.sendMessage(this.currentChatType, this.currentChatId, chatMessage);
 
         if (success) {
             messageInput.value = '';
             messageInput.style.height = 'auto';
+
+            // QUAN TRỌNG: Đóng reply UI sau khi gửi thành công
+            if (window.messageManager && window.messageManager.replyingToMessage) {
+                window.messageManager.cancelReply();
+            }
+
             this.sendStopTyping();
         }
     }
