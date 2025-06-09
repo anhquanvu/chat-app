@@ -28,4 +28,6 @@ public interface UserContactService {
 
     ContactStatus getContactStatus(Long userId, Long contactId);
     Boolean areUsersFriends(Long userId, Long contactId);
+
+    UserListResponse getAllUsers(Long currentUserId, String keyword, int page, int size);
 }

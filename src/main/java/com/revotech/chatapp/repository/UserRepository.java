@@ -33,4 +33,14 @@ public interface UserRepository extends JpaRepository<User, Long> {
             "u.id NOT IN :excludeIds AND u.enabled = true " +
             "ORDER BY u.fullName ASC")
     Page<User> findUsersExcluding(@Param("excludeIds") List<Long> excludeIds, Pageable pageable);
+
+    @Query("SELECT u FROM User u WHERE u.id <> :currentUserId AND u.enabled = true ORDER BY u.fullName ASC")
+    Page<User> findAllUsersExcludingCurrent(@Param("currentUserId") Long currentUserId, Pageable pageable);
+
+    @Query("SELECT u FROM User u WHERE u.enabled = true AND " +
+            "(LOWER(u.username) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+            " LOWER(u.fullName) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+            " LOWER(u.email) LIKE LOWER(CONCAT('%', :keyword, '%'))) " +
+            "ORDER BY u.fullName ASC")
+    Page<User> searchAllUsers(@Param("keyword") String keyword, Pageable pageable);
 }

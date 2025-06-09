@@ -229,7 +229,7 @@ function displayRooms(rooms) {
 
 async function loadContacts() {
     try {
-        const response = await fetch('/api/users/contacts?status=ACCEPTED&page=0&size=50', {
+        const response = await fetch('/api/users/all?page=0&size=50', {
             headers: {
                 'Authorization': 'Bearer ' + (window.authToken || window.authManager?.getAuthToken())
             }
@@ -237,7 +237,7 @@ async function loadContacts() {
 
         if (response.ok) {
             const data = await response.json();
-            displayContacts(data.content || []);
+            displayContacts(data.users || []);
         }
     } catch (error) {
         console.error('Error loading contacts:', error);
@@ -246,21 +246,21 @@ async function loadContacts() {
     }
 }
 
-function displayContacts(contacts) {
+function displayContacts(users) {
     const container = document.getElementById('contactsList');
 
-    if (contacts.length === 0) {
-        container.innerHTML = '<div style="text-align: center; padding: 20px; color: #666;">Chưa có bạn bè nào</div>';
+    if (users.length === 0) {
+        container.innerHTML = '<div style="text-align: center; padding: 20px; color: #666;">Không có nhân viên nào</div>';
         return;
     }
 
-    container.innerHTML = contacts.map(contact => `
-        <div class="list-item" onclick="startDirectChat(${contact.contact.id}, '${contact.contact.fullName || contact.contact.username}')">
+    container.innerHTML = users.map(user => `
+        <div class="list-item" onclick="startDirectChat(${user.id}, '${user.fullName || user.username}')">
             <div class="item-header">
-                <div class="item-name">${contact.contact.fullName || contact.contact.username}</div>
-                ${contact.contact.isOnline ? '<div class="online-indicator"></div>' : ''}
+                <div class="item-name">${user.fullName || user.username}</div>
+                ${user.isOnline ? '<div class="online-indicator"></div>' : ''}
             </div>
-            <div class="item-preview">@${contact.contact.username}</div>
+            <div class="item-preview">@${user.username}</div>
         </div>
     `).join('');
 }
@@ -489,7 +489,7 @@ document.getElementById('contactSearchInput').addEventListener('input', function
 
 async function searchUsers(keyword, resultContainerId) {
     try {
-        const response = await fetch(`/api/users/search?keyword=${encodeURIComponent(keyword)}&page=0&size=20`, {
+        const response = await fetch(`/api/users/all?keyword=${encodeURIComponent(keyword)}&page=0&size=20`, {
             headers: {
                 'Authorization': 'Bearer ' + (window.authToken || window.authManager?.getAuthToken())
             }
@@ -527,14 +527,40 @@ function displayUserSearchResults(users, containerId) {
 }
 
 function selectUser(userId, userName, containerId) {
-    document.querySelectorAll(`#${containerId} .user-item`).forEach(item => item.classList.remove('selected'));
-    event.target.closest('.user-item').classList.add('selected');
+     document.querySelectorAll(`#${containerId} .user-item`).forEach(item => item.classList.remove('selected'));
+     event.target.closest('.user-item').classList.add('selected');
 
-    if (containerId === 'userSearchResults') {
-        selectedUserId = userId;
-        document.getElementById('startConversationBtn').disabled = false;
-    } else if (containerId === 'contactSearchResults') {
-        sendFriendRequest(userId);
+     if (containerId === 'userSearchResults') {
+         selectedUserId = userId;
+         document.getElementById('startConversationBtn').disabled = false;
+     } else if (containerId === 'contactSearchResults') {
+         // Trong môi trường doanh nghiệp, có thể trực tiếp bắt đầu chat thay vì gửi lời mời kết bạn
+         startDirectChatFromSearch(userId, userName);
+     }
+}
+
+async function startDirectChatFromSearch(userId, userName) {
+    try {
+        const response = await fetch(`/api/conversations/direct/${userId}`, {
+            method: 'GET',
+            headers: {
+                'Authorization': 'Bearer ' + (window.authToken || window.authManager?.getAuthToken())
+            }
+        });
+
+        if (response.ok) {
+            const conversation = await response.json();
+            closeModal('addContactModal');
+
+            switchSidebarTab('conversations');
+            setTimeout(() => {
+                loadConversations();
+                openConversation(conversation.id, userName);
+            }, 500);
+        }
+    } catch (error) {
+        console.error('Error starting chat:', error);
+        alert('Không thể bắt đầu cuộc trò chuyện');
     }
 }
 

@@ -25,6 +25,18 @@ public class UserController {
 
     private final UserContactService userContactService;
 
+    @GetMapping("/all")
+    public ResponseEntity<UserListResponse> getAllUsers(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(required = false) String keyword,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+
+        UserListResponse response = userContactService.getAllUsers(
+                currentUser.getId(), keyword, page, size);
+        return ResponseEntity.ok(response);
+    }
+
     @GetMapping("/search")
     public ResponseEntity<UserListResponse> searchUsers(
             @RequestParam String keyword,

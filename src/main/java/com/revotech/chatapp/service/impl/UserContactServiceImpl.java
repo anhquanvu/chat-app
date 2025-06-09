@@ -33,6 +33,42 @@ public class UserContactServiceImpl implements UserContactService {
     private final UserRepository userRepository;
 
     @Override
+    public UserListResponse getAllUsers(Long currentUserId, String keyword, int page, int size) {
+        log.debug("Getting all users for currentUserId: {}, keyword: {}, page: {}, size: {}",
+                currentUserId, keyword, page, size);
+
+        Pageable pageable = PageRequest.of(page, size);
+        Page<User> usersPage;
+
+        if (keyword != null && !keyword.trim().isEmpty()) {
+            // Tìm kiếm với từ khóa
+            usersPage = userRepository.searchAllUsers(keyword.trim(), pageable);
+        } else {
+            // Lấy tất cả người dùng trừ current user
+            usersPage = userRepository.findAllUsersExcludingCurrent(currentUserId, pageable);
+        }
+
+        List<UserSummaryDTO> userSummaries = usersPage.getContent().stream()
+                .map(user -> UserSummaryDTO.builder()
+                        .id(user.getId())
+                        .username(user.getUsername())
+                        .fullName(user.getFullName())
+                        .avatarUrl(user.getAvatarUrl())
+                        .isOnline(user.getIsOnline())
+                        .lastSeen(user.getLastSeen())
+                        .bio(user.getBio())
+                        .build())
+                .collect(Collectors.toList());
+
+        return UserListResponse.builder()
+                .users(userSummaries)
+                .currentPage(usersPage.getNumber())
+                .totalPages(usersPage.getTotalPages())
+                .totalElements(usersPage.getTotalElements())
+                .build();
+    }
+
+    @Override
     public void sendFriendRequest(AddContactRequest request, Long userId) {
         if (userId.equals(request.getContactId())) {
             throw new AppException("Cannot send friend request to yourself");
