@@ -1,123 +1,153 @@
-# Real-Time Chat Application
+# Ứng Dụng Chat Thời Gian Thực
 
-A comprehensive enterprise-grade chat application built with Spring Boot and modern web technologies, featuring real-time messaging, advanced user management, and scalable architecture designed for production environments.
+Một ứng dụng chat cấp doanh nghiệp được xây dựng với **Spring Boot** và các công nghệ web hiện đại, hỗ trợ nhắn tin thời gian thực, quản lý người dùng nâng cao và kiến trúc có thể mở rộng phù hợp với môi trường sản xuất.
 
-## Overview
+## Tổng Quan
 
-This chat application provides a complete messaging platform supporting both direct conversations and group rooms. The system incorporates real-time WebSocket communication, robust authentication mechanisms, message reaction capabilities, and advanced features commonly found in modern messaging platforms like Discord, Slack, and Telegram.
+Ứng dụng cung cấp nền tảng nhắn tin đầy đủ hỗ trợ trò chuyện riêng và nhóm. Tích hợp WebSocket thời gian thực, xác thực mạnh mẽ, phản ứng tin nhắn bằng emoji và nhiều tính năng hiện đại giống như Discord, Slack hay Telegram.
 
-## Core Features
+## Tính Năng Chính
 
-### Authentication & User Management
-The application implements JWT-based authentication with refresh token support, providing secure user registration and login functionality. Users can manage their profiles, including avatar uploads, bio information, and online status tracking. The system maintains comprehensive user sessions across multiple devices and provides real-time online/offline status updates.
+### ✅ Xác Thực & Quản Lý Người Dùng
+- Xác thực bằng **JWT** kèm refresh token.
+- Quản lý hồ sơ người dùng: avatar, tiểu sử, trạng thái online.
+- Hỗ trợ phiên người dùng trên nhiều thiết bị.
+- Cập nhật trạng thái online/offline thời gian thực.
 
-### Real-Time Messaging
-Built on WebSocket technology, the application delivers instant message delivery with typing indicators and message status tracking. The messaging system supports rich text content, file attachments, and handles both one-on-one conversations and multi-participant room discussions. Message delivery status includes sent, delivered, and read confirmations with appropriate visual indicators.
+### ✅ Nhắn Tin Thời Gian Thực
+- Sử dụng **WebSocket** và STOMP để gửi/nhận tin tức thời.
+- Hỗ trợ chỉ báo đang gõ, trạng thái tin nhắn (đã gửi, đã nhận, đã đọc).
+- Gửi tin nhắn 1-1 hoặc theo nhóm.
+- Hỗ trợ nội dung văn bản, emoji và đính kèm tệp.
 
-### Room & Conversation Management
-Users can create and participate in group rooms with configurable settings including room descriptions, member management, and administrative controls. Direct conversations enable private messaging between users with end-to-end conversation history. The system provides comprehensive participant management with role-based permissions for room administration.
+### ✅ Quản Lý Phòng & Cuộc Trò Chuyện
+- Tạo, tham gia và quản lý các phòng nhóm.
+- Mỗi phòng có mô tả, quản trị viên và phân quyền.
+- Hỗ trợ trò chuyện riêng tư và lưu lịch sử đầy đủ.
 
-### Message Reactions & Interactions
-The platform supports message reactions with emoji responses, allowing users to provide quick feedback without additional messages. Users can add multiple reaction types to messages, view reaction statistics, and see who reacted with each emoji type. The reaction system updates in real-time across all connected clients.
+### ✅ Phản Hồi Tin Nhắn
+- Phản ứng bằng emoji theo thời gian thực.
+- Xem ai đã phản ứng và loại emoji đã dùng.
+- Cập nhật đồng bộ trên tất cả thiết bị.
 
-### Message Threading & Replies
-Advanced message threading capabilities allow users to reply to specific messages, creating organized conversation flows. Reply functionality includes visual indicators showing the original message context, sender information, and content preview. The threading system maintains conversation structure while supporting nested reply chains.
+### ✅ Trả Lời & Luồng Tin Nhắn
+- Trả lời tin cụ thể để tạo luồng hội thoại rõ ràng.
+- Hiển thị nội dung gốc và người gửi khi trả lời.
+- Hỗ trợ trả lời lồng nhau.
 
-### Message Pinning & Organization
-Important messages can be pinned within rooms or conversations for easy reference. Pinned messages display in a dedicated section with options to navigate directly to the original message location. The system tracks who pinned each message and provides appropriate permissions for pin management.
+### ✅ Ghim Tin Nhắn
+- Ghim các tin quan trọng trong phòng.
+- Danh sách tin ghim riêng biệt, dễ truy cập.
+- Phân quyền ai có thể ghim/bỏ ghim.
 
-### Search & Discovery
-Comprehensive search functionality enables users to find messages across all conversations and rooms using keyword queries. Advanced search filters include date ranges, sender information, and content type filtering. Search results display with context and direct navigation to original message locations.
+### ✅ Tìm Kiếm Nâng Cao
+- Tìm tin nhắn theo từ khóa trên toàn hệ thống.
+- Lọc theo người gửi, ngày, loại nội dung.
+- Hiển thị kết quả có ngữ cảnh và link tới vị trí gốc.
 
-### File Sharing & Attachments
-Robust file upload system supports multiple file types including images, documents, and media files. The application provides file type validation, size restrictions, and secure storage mechanisms. Uploaded files display with appropriate previews and download capabilities while maintaining access control.
+### ✅ Chia Sẻ Tệp & Đính Kèm
+- Hỗ trợ ảnh, tài liệu, media, v.v.
+- Giới hạn định dạng và dung lượng.
+- Hiển thị xem trước và tải về có phân quyền.
 
-### User Contact Management
-Built-in contact system allows users to manage friend lists, send contact requests, and organize their network of communication partners. Contact management includes approval workflows, blocking capabilities, and contact organization features.
+### ✅ Quản Lý Danh Bạ
+- Gửi/nhận lời mời kết bạn.
+- Quản lý danh sách liên hệ và chặn người dùng.
+- Tổ chức danh bạ theo nhu cầu cá nhân.
 
-### Administrative Features
-Comprehensive administrative controls provide user management, room moderation, and system monitoring capabilities. Administrative functions include user account management, content moderation tools, and system usage analytics.
+### ✅ Tính Năng Quản Trị
+- Quản lý người dùng, phòng, nội dung.
+- Kiểm duyệt tin nhắn và theo dõi hoạt động hệ thống.
+- Xem thống kê sử dụng và nhật ký hoạt động.
 
-## Technical Architecture
+## Kiến Trúc Kỹ Thuật
 
-### Backend Infrastructure
-The application utilizes Spring Boot 3.5.0 with Java 17, providing a robust and scalable foundation. The architecture incorporates Spring Security for authentication, Spring Data JPA for database operations, and Spring WebSocket for real-time communication. The system design follows enterprise patterns with comprehensive error handling and transaction management.
+### 🔧 Backend
+- Spring Boot 3.5.0 với Java 17.
+- Spring Security (bảo mật), Spring WebSocket (real-time), Spring Data JPA (CSDL).
+- Xử lý lỗi, giao dịch và cấu trúc doanh nghiệp.
 
-### Database Design
-MySQL database implementation with HikariCP connection pooling ensures optimal performance and scalability. The database schema supports complex relationships between users, messages, rooms, and associated metadata. Proper indexing strategies optimize query performance for message retrieval and search operations.
+### 💾 Cơ Sở Dữ Liệu
+- MySQL kết hợp HikariCP (connection pool).
+- ORM: Hibernate.
+- Flyway hỗ trợ migration.
+- Index tối ưu cho hiệu suất tìm kiếm tin nhắn.
 
-### Real-Time Communication
-WebSocket implementation provides instant message delivery with automatic reconnection handling and session management. The system maintains active user tracking, typing indicators, and message status synchronization across all connected clients. WebSocket security integration ensures authenticated communication channels.
+### ⚡ Giao Tiếp Thời Gian Thực
+- WebSocket + STOMP + SockJS fallback.
+- Giám sát trạng thái người dùng, typing, message sync.
+- Kênh bảo mật xác thực khi kết nối WebSocket.
 
-### Caching & Performance
-Strategic caching implementation improves response times for frequently accessed data including user sessions, message metadata, and room information. The application supports both in-memory and Redis-based caching solutions for different deployment scenarios.
+### 🚀 Hiệu Năng & Caching
+- Hỗ trợ cache trong bộ nhớ hoặc Redis.
+- Caching cho session, metadata tin nhắn, thông tin phòng.
 
-### Security Implementation
-Comprehensive security measures include JWT token authentication, CORS configuration, rate limiting, and input validation. The system implements proper authorization checks for all operations and maintains audit trails for security monitoring.
+### 🔐 Bảo Mật
+- JWT + Refresh token.
+- CORS, rate limiting, kiểm tra đầu vào.
+- Phân quyền truy cập, ghi nhật ký truy cập.
 
-## Technology Stack
+## Công Nghệ Sử Dụng
 
-### Core Framework
-- Spring Boot 3.5.0 with Spring Web, Spring Security, and Spring Data JPA
-- Java 17 runtime environment with modern language features
-- Maven build system with dependency management
+- **Java 17**, **Spring Boot 3.5.0**
+- **Gradle** (thay vì Maven)
+- **MySQL**, **Hibernate**, **Flyway**
+- **WebSocket (STOMP)**, **Spring Security**
+- **Redis (tuỳ chọn)**, **Lombok**, **SpringDoc (OpenAPI)**
 
-### Database & Persistence
-- MySQL database with HikariCP connection pooling
-- Hibernate ORM with optimized query performance
-- Flyway database migration support
+## Cài Đặt & Triển Khai
 
-### Real-Time Features
-- Spring WebSocket with STOMP protocol
-- SockJS fallback for browser compatibility
-- Real-time message broadcasting and status updates
+### 🧱 Yêu Cầu
+- Java 17+  
+- Gradle (sử dụng `./gradlew`)  
+- MySQL 8+
 
-### Security & Authentication
-- JWT token-based authentication with refresh token support
-- Spring Security integration with method-level authorization
-- CORS configuration for cross-origin resource sharing
+### ⚙️ Cấu Hình
+1. Tạo CSDL tên `chatapp` trong MySQL.
+2. Cập nhật `application.yml`:
+   - Thông tin kết nối DB
+   - Secret key cho JWT
+   - CORS, thư mục upload, giới hạn dung lượng
 
-### Development & Documentation
-- SpringDoc OpenAPI for comprehensive API documentation
-- Lombok for reduced boilerplate code
-- Comprehensive logging with configurable levels
+### 🔨 Build & Chạy
+```bash
+./gradlew build
+java -jar build/libs/chatapp-0.0.1-SNAPSHOT.jar
+```
 
-## Installation & Setup
+Ứng dụng chạy tại: `http://localhost:8080`
 
-### Prerequisites
-Ensure Java 17 or higher is installed along with Maven 3.6 or higher for dependency management. MySQL 8.0 or higher is required for optimal database compatibility and performance.
+## 📘 Tài Liệu API
 
-### Database Configuration
-Create a MySQL database named `chatapp` and configure the connection details in `application.yml`. The application will automatically create the required tables on first startup using Hibernate DDL generation.
+Khi chạy ứng dụng, tài liệu API có tại:
+```
+http://localhost:8080/swagger-ui.html
+```
 
-### Application Configuration
-Update the `application.yml` file with your specific environment settings including database credentials, JWT secret keys, and CORS origins. Configure file upload directories and size limits according to your deployment requirements.
+Bao gồm mô tả endpoint, schema request/response và khả năng test trực tiếp.
 
-### Build & Deployment
-Execute `mvn clean install` to build the application, then run using `java -jar target/chatapp-0.0.1-SNAPSHOT.jar` or through your preferred deployment method. The application will start on port 8080 by default.
+## Triển Khai Thực Tế
 
-## API Documentation
+### 🧠 Tối Ưu
+- Sử dụng HikariCP, caching, cấu hình thread hợp lý.
+- Theo dõi CPU/RAM khi tải lớn.
 
-Comprehensive API documentation is available through Swagger UI at `/swagger-ui.html` when the application is running. The documentation includes detailed endpoint descriptions, request/response schemas, and interactive testing capabilities for all available operations.
+### 🔐 Bảo Mật
+- Cấu hình tường lửa, SSL, giới hạn tốc độ.
+- Theo dõi log và audit hoạt động hệ thống.
 
-## Production Considerations
+### ⚖️ Khả Năng Mở Rộng
+- Hỗ trợ scale ngang (load balancer).
+- Redis cho session & cache khi triển khai đa instance.
 
-### Performance Optimization
-The application includes production-ready configurations for connection pooling, caching strategies, and database optimization. Monitor system resources and adjust pool sizes based on concurrent user loads and message volume requirements.
+### 📈 Giám Sát & Bảo Trì
+- Dùng Spring Boot Actuator để monitor.
+- Kết hợp ELK hoặc Prometheus + Grafana để quan sát log, hiệu suất.
 
-### Security Hardening
-Implement proper firewall configurations, regular security updates, and monitoring systems for production deployments. Configure appropriate rate limiting values and review authentication settings for your security requirements.
+## Bản Quyền
 
-### Scalability Planning
-The architecture supports horizontal scaling through load balancer deployment and database clustering. Consider implementing Redis for session management and caching in multi-instance deployments.
+Dự án thuộc quyền sở hữu doanh nghiệp. Việc sử dụng, phân phối hay chỉnh sửa phải tuân theo điều khoản giấy phép kèm theo.
 
-### Monitoring & Maintenance
-Utilize Spring Boot Actuator endpoints for health monitoring and performance metrics. Implement proper logging aggregation and alerting systems for production monitoring requirements.
+## Hỗ Trợ & Tài Liệu
 
-## License
-
-This project is proprietary software developed for enterprise use. Distribution and modification rights are subject to the terms defined in the project license agreement.
-
-## Support & Documentation
-
-For additional support, configuration guidance, or feature requests, consult the comprehensive documentation provided with this application or contact the development team through the established support channels.
+Vui lòng liên hệ đội ngũ phát triển hoặc tham khảo tài liệu đi kèm để được hỗ trợ, cấu hình và cập nhật tính năng.
