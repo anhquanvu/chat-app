@@ -21,30 +21,42 @@ spring:
       shutdown:
         await-termination: true
         await-termination-period: 30s
+
   # Database Configuration
   datasource:
-    url: jdbc:mysql://localhost:3306/chatapp?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://localhost:3306/chatapp?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&useUnicode=true&characterEncoding=UTF-8
     username: root
-    password: 12345678
+    password:
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
+      pool-name: ChatAppHikariCP
       maximum-pool-size: 20
       minimum-idle: 5
       connection-timeout: 30000
       idle-timeout: 600000
       max-lifetime: 1800000
-      pool-name: ChatAppHikariCP
+      leak-detection-threshold: 60000
+      connection-test-query: SELECT 1
+      auto-commit: false
+      data-source-properties:
+        cachePrepStmts: true
+        prepStmtCacheSize: 250
+        prepStmtCacheSqlLimit: 2048
+        useServerPrepStmts: true
+        rewriteBatchedStatements: true
 
   # JPA Configuration
   jpa:
     hibernate:
-      ddl-auto: update # Đổi từ validate về update để tự động tạo/cập nhật schema
+      ddl-auto: update
+      naming:
+        physical-strategy: org.hibernate.boot.model.naming.CamelCaseToUnderscoresNamingStrategy
+        implicit-strategy: org.springframework.boot.orm.jpa.hibernate.SpringImplicitNamingStrategy
       session:
         events:
           log:
             LOG_QUERIES_SLOWER_THAN_MS: 25
       collection:
-        # Cải thiện xử lý collection để tránh concurrent modification
         lazy_loading_threshold: 3
         temp:
           use_jdbc_metadata_defaults: false
@@ -56,35 +68,38 @@ spring:
     show-sql: false
     properties:
       hibernate:
-        dialect: org.hibernate.dialect.MySQLDialect # Sửa từ MySQL8Dialect
+        dialect: org.hibernate.dialect.MySQLDialect
         format_sql: true
         use_sql_comments: true
         jdbc:
           batch_size: 25
+          fetch_size: 50
         order_inserts: true
         order_updates: true
-        # Thêm cấu hình naming strategy
-        naming:
-          physical-strategy: org.hibernate.boot.model.naming.CamelCaseToUnderscoresNamingStrategy
+        connection:
+          provider_disables_autocommit: true
+        # Connection pool logging
+        hikari:
+          connectionTestQuery: SELECT 1
     open-in-view: false
 
-  # Disable Flyway nếu không dùng
+  # Disable Flyway
   flyway:
     enabled: false
 
-  # Redis Configuration - Comment out vì chưa có Redis
-  data:
-    redis:
-      host: localhost
-      port: 6379
-      password:
-      timeout: 2000ms
-      lettuce:
-        pool:
-          max-active: 20
-          max-idle: 10
-          min-idle: 2
-          max-wait: 2000ms
+  # Redis Configuration (commented out if not using Redis)
+  # data:
+  #   redis:
+  #     host: localhost
+  #     port: 6379
+  #     password:
+  #     timeout: 2000ms
+  #     lettuce:
+  #       pool:
+  #         max-active: 20
+  #         max-idle: 10
+  #         min-idle: 2
+  #         max-wait: 2000ms
 
   # File Upload Configuration
   servlet:
@@ -132,7 +147,7 @@ app:
 
   # Rate Limiting Configuration
   rate-limiting:
-    enabled: false # Tắt tạm thời vì phụ thuộc Redis
+    enabled: false # Disabled temporarily as it depends on Redis
     requests-per-minute: 60
     requests-per-hour: 1000
     burst-capacity: 10
@@ -154,18 +169,25 @@ app:
     max-login-attempts: 5
     lockout-duration: 900 # 15 minutes in seconds
 
-# Logging Configuration
+# Enhanced Logging Configuration
 logging:
   level:
     root: INFO
     com.revotech.chatapp: DEBUG
+    com.revotech.chatapp.util.WebSocketSafeBroadcast: INFO
+    org.springframework.messaging: WARN
+    org.springframework.web.socket: WARN
+    # Database and Connection Pool Logging
+    com.zaxxer.hikari: INFO
+    com.zaxxer.hikari.HikariConfig: DEBUG
+    com.zaxxer.hikari.HikariDataSource: INFO
+    org.hibernate.engine.jdbc.env.internal.LobCreatorBuilderImpl: WARN
+    org.hibernate.orm.connections.pooling: INFO
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+    # Security Logging
     org.springframework.security: DEBUG
-    org.springframework.web: DEBUG
-    org.springframework.messaging: INFO
-    org.hibernate.SQL: WARN
-    org.hibernate.type: WARN
-    org.springframework.data.redis: WARN
-    org.springframework.cache: WARN # Giảm log cache
+    com.revotech.chatapp.security: DEBUG
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
     file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
@@ -179,10 +201,12 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,metrics,configprops,env
   endpoint:
     health:
       show-details: when-authorized
+    configprops:
+      show-values: when-authorized
 
 # Spring Doc OpenAPI Configuration
 springdoc:

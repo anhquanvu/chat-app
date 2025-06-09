@@ -16,6 +16,7 @@ import com.revotech.chatapp.repository.*;
 import com.revotech.chatapp.security.UserPrincipal;
 import com.revotech.chatapp.service.MessageService;
 import com.revotech.chatapp.service.UserSessionService;
+import com.revotech.chatapp.util.WebSocketSafeBroadcast;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -58,6 +59,8 @@ public class MessageServiceImpl implements MessageService {
 
     // Message visibility tracking for mobile/web
     private final Map<String, Set<String>> visibleMessages = new ConcurrentHashMap<>();
+
+    private final WebSocketSafeBroadcast safeBroadcast;
 
     @Override
     public void trackUserEnterChat(Long roomId, Long conversationId, Long userId, String sessionId) {
@@ -213,6 +216,7 @@ public class MessageServiceImpl implements MessageService {
             if (replyToMessageOpt.isPresent()) {
                 Message replyToMessage = replyToMessageOpt.get();
                 log.info("Found replyToMessage with id: {}, messageId: {}", replyToMessage.getId(), replyToMessage.getMessageId());
+                // Thay đổi: sử dụng entity object thay vì chỉ ID
                 message.setReplyTo(replyToMessage);
             } else {
                 log.warn("Reply message not found for replyToId: {}", request.getReplyToId());
@@ -655,8 +659,8 @@ public class MessageServiceImpl implements MessageService {
                 "/topic/room/" + message.getRoomId() :
                 "/topic/conversation/" + message.getConversationId();
 
-        messagingTemplate.convertAndSend(destination, response);
-
+        // Sử dụng safe broadcast thay vì direct call
+        safeBroadcast.safeConvertAndSend(destination, response);
         log.debug("Message broadcasted to {}", destination);
     }
 
@@ -922,6 +926,23 @@ public class MessageServiceImpl implements MessageService {
     private ChatMessage convertMessageToDTO(Message message) {
         List<MessageReactionDTO> reactions = getMessageReactions(message.getMessageId());
 
+        // Xử lý reply message trước
+        ChatMessage replyToMessage = null;
+        String replyToSenderName = null;
+
+        if (message.getReplyTo() != null) {
+            Message replyMsg = message.getReplyTo();
+            replyToMessage = ChatMessage.builder()
+                    .id(replyMsg.getMessageId()) // Sử dụng messageId cho frontend
+                    .content(replyMsg.getContent())
+                    .senderName(replyMsg.getSender().getFullName())
+                    .senderUsername(replyMsg.getSender().getUsername())
+                    .timestamp(replyMsg.getCreatedAt())
+                    .build();
+
+            replyToSenderName = replyMsg.getSender().getFullName();
+        }
+
         // Get pinned by user info if message is pinned
         String pinnedByUsername = null;
         if (message.getIsPinned() && message.getPinnedBy() != null) {
@@ -943,6 +964,9 @@ public class MessageServiceImpl implements MessageService {
                 .timestamp(message.getCreatedAt())
                 .roomId(message.getRoom() != null ? message.getRoom().getId() : null)
                 .conversationId(message.getConversation() != null ? message.getConversation().getId() : null)
+                .replyToId(message.getReplyTo() != null ? message.getReplyTo().getMessageId() : null) // Frontend nhận UUID
+                .replyToMessage(replyToMessage)
+                .replyToSenderName(replyToSenderName)
                 .isEdited(message.getIsEdited())
                 .editedAt(message.getEditedAt())
                 .isPinned(message.getIsPinned())
@@ -950,7 +974,9 @@ public class MessageServiceImpl implements MessageService {
                 .pinnedByUsername(pinnedByUsername)
                 .build();
 
+        // Set reactions
         chatMessage.setReactions(reactions);
+
         return chatMessage;
     }
 

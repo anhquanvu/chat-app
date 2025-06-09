@@ -64,12 +64,10 @@ public class Room {
     @OneToMany(mappedBy = "room", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     @Fetch(FetchMode.SUBSELECT)
     @Builder.Default
-    @EqualsAndHashCode.Exclude
     private Set<RoomMember> members = new HashSet<>();
 
     @OneToMany(mappedBy = "room", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     @Fetch(FetchMode.SUBSELECT)
     @Builder.Default
-    @EqualsAndHashCode.Exclude
     private Set<Message> messages = new HashSet<>();
 }

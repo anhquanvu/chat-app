@@ -53,6 +53,5 @@ public class Conversation {
 
     @OneToMany(mappedBy = "conversation", cascade = CascadeType.ALL, fetch = FetchType.LAZY, orphanRemoval = true)
     @Builder.Default
-    @EqualsAndHashCode.Exclude
     private Set<Message> messages = new HashSet<>();
 }

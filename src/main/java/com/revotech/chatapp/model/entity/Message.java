@@ -55,7 +55,7 @@ public class Message {
     private MessageStatus status = MessageStatus.SENT;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "reply_to_id")
+    @JoinColumn(name = "reply_to_id", referencedColumnName = "id")
     private Message replyTo;
 
     @Builder.Default
@@ -85,11 +85,9 @@ public class Message {
 
     @OneToMany(mappedBy = "message", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     @Builder.Default
-    @EqualsAndHashCode.Exclude
     private Set<MessageReaction> reactions = new HashSet<>();
 
     @OneToMany(mappedBy = "message", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     @Builder.Default
-    @EqualsAndHashCode.Exclude
     private Set<MessageDelivery> deliveries = new HashSet<>();
 }

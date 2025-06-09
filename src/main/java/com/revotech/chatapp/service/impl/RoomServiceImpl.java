@@ -425,7 +425,7 @@ public class RoomServiceImpl implements RoomService {
         if (message.getReplyTo() != null) {
             Message replyMsg = message.getReplyTo();
             replyToMessage = ChatMessage.builder()
-                    .id(replyMsg.getMessageId())
+                    .id(replyMsg.getMessageId()) // Sử dụng messageId cho frontend
                     .content(replyMsg.getContent())
                     .senderName(replyMsg.getSender().getFullName())
                     .senderUsername(replyMsg.getSender().getUsername())
@@ -456,7 +456,7 @@ public class RoomServiceImpl implements RoomService {
                 .timestamp(message.getCreatedAt())
                 .roomId(message.getRoom() != null ? message.getRoom().getId() : null)
                 .conversationId(message.getConversation() != null ? message.getConversation().getId() : null)
-                .replyToId(message.getReplyTo() != null ? message.getReplyTo().getMessageId() : null)
+                .replyToId(message.getReplyTo() != null ? message.getReplyTo().getMessageId() : null) // Frontend nhận UUID
                 .replyToMessage(replyToMessage)
                 .replyToSenderName(replyToSenderName)
                 .isEdited(message.getIsEdited())

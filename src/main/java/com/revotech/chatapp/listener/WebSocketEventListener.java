@@ -3,6 +3,7 @@ package com.revotech.chatapp.listener;
 import com.revotech.chatapp.model.dto.OnlineUser;
 import com.revotech.chatapp.service.MessageService;
 import com.revotech.chatapp.service.UserSessionService;
+import com.revotech.chatapp.util.WebSocketSafeBroadcast;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
@@ -24,6 +25,7 @@ public class WebSocketEventListener {
     private final SimpMessageSendingOperations messagingTemplate;
     private final MessageService messageService;
     private final UserSessionService userSessionService;
+    private final WebSocketSafeBroadcast safeBroadcast;
 
     @EventListener
     @Async("taskExecutor")
@@ -111,7 +113,7 @@ public class WebSocketEventListener {
 
     private void processSuccessfulConnection(String username, Long userId, String sessionId) {
         try {
-            log.info("User {} connected with session {}", username, sessionId);
+            log.info("User {} successfully connected with session {}", username, sessionId);
 
             // Mark user as online if service is available
             if (userSessionService != null) {
@@ -126,10 +128,11 @@ public class WebSocketEventListener {
                     .sessionId(sessionId)
                     .build();
 
-            messagingTemplate.convertAndSend("/topic/user-status", onlineUser);
+            // Sử dụng safe broadcast
+            safeBroadcast.safeConvertAndSend("/topic/user-status", onlineUser);
 
             // Send personal notification
-            messagingTemplate.convertAndSendToUser(username, "/queue/message-status",
+            safeBroadcast.safeConvertAndSendToUser(username, "/queue/message-status",
                     "Connected to message status updates");
 
         } catch (Exception e) {
@@ -154,7 +157,8 @@ public class WebSocketEventListener {
                     .sessionId(sessionId)
                     .build();
 
-            messagingTemplate.convertAndSend("/topic/user-status", offlineUser);
+            // Sử dụng safe broadcast
+            safeBroadcast.safeConvertAndSend("/topic/user-status", offlineUser);
 
         } catch (Exception e) {
             log.error("Failed to process disconnection for user {}", username, e);

@@ -39,6 +39,10 @@ public class ChatController {
         Long userId = (Long) headerAccessor.getSessionAttributes().get("userId");
         request.setConversationId(conversationId);
 
+        // Thêm logging chi tiết
+        log.debug("Full request payload: content='{}', type='{}', replyToId='{}'",
+                request.getContent(), request.getType(), request.getReplyToId());
+
         ChatMessage chatMessage = conversationService.sendMessageToConversation(request, userId);
         log.info("Message sent to conversation {}: {}", conversationId, chatMessage.getContent());
     }

@@ -35,6 +35,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -186,6 +187,20 @@ public class ConversationServiceImpl implements ConversationService {
                 .type(request.getType())
                 .build();
 
+        // THÊM ĐOẠN CODE XỬ LÝ REPLY VÀO ĐÂY:
+        if (request.getReplyToId() != null) {
+            log.debug("Processing reply for replyToId: {}", request.getReplyToId());
+            Optional<Message> replyToMessageOpt = messageRepository.findByMessageId(request.getReplyToId());
+            if (replyToMessageOpt.isPresent()) {
+                Message replyToMessage = replyToMessageOpt.get();
+                log.info("Found reply target message with id: {}, messageId: {}",
+                        replyToMessage.getId(), replyToMessage.getMessageId());
+                message.setReplyTo(replyToMessage);
+            } else {
+                log.warn("Reply target message not found for replyToId: {}", request.getReplyToId());
+            }
+        }
+
         message = messageRepository.save(message);
 
         // Update conversation last message time
@@ -309,7 +324,6 @@ public class ConversationServiceImpl implements ConversationService {
     }
 
     private ChatMessage convertMessageToDTO(Message message) {
-        // Get reactions for this message
         List<MessageReactionDTO> reactions = getMessageReactions(message);
 
         // Xử lý reply message trước
@@ -319,7 +333,7 @@ public class ConversationServiceImpl implements ConversationService {
         if (message.getReplyTo() != null) {
             Message replyMsg = message.getReplyTo();
             replyToMessage = ChatMessage.builder()
-                    .id(replyMsg.getMessageId())
+                    .id(replyMsg.getMessageId()) // Sử dụng messageId cho frontend
                     .content(replyMsg.getContent())
                     .senderName(replyMsg.getSender().getFullName())
                     .senderUsername(replyMsg.getSender().getUsername())
@@ -351,7 +365,7 @@ public class ConversationServiceImpl implements ConversationService {
                 .timestamp(message.getCreatedAt())
                 .roomId(message.getRoom() != null ? message.getRoom().getId() : null)
                 .conversationId(message.getConversation() != null ? message.getConversation().getId() : null)
-                .replyToId(message.getReplyTo() != null ? message.getReplyTo().getMessageId() : null)
+                .replyToId(message.getReplyTo() != null ? message.getReplyTo().getMessageId() : null) // Frontend nhận UUID
                 .replyToMessage(replyToMessage)
                 .replyToSenderName(replyToSenderName)
                 .isEdited(message.getIsEdited())
